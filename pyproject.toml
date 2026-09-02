@@ -1,0 +1,59 @@
+[project]
+name = "tts-audiobook"
+version = "2.0.0"
+description = "Spec-driven audiobook studio: cast character voices from metadata, render with local TTS."
+readme = "README.md"
+requires-python = ">=3.12"
+dependencies = [
+    "soundfile>=0.12",
+    # Cap below 2.5: numba (via qwen-tts -> librosa) requires numpy<2.5, and
+    # without the cap the resolver falls back to numba 0.53.1 / llvmlite 0.36.0,
+    # which has no Python 3.12 wheel and fails to build from source.
+    "numpy>=1.26,<2.5",
+    "click>=8.1",
+    "rich>=13.7",
+    "platformdirs>=4.2",
+    "pyloudnorm>=0.1",
+    "mutagen>=1.47",
+]
+
+# chatterbox-tts is deliberately NOT an extra here: it pins torch==2.6.0 and a
+# conflicting transformers, so it can never share this venv or lockfile. The
+# chatterbox engine runs via engines/subproc.py against a separate venv
+# (CHATTERBOX_PYTHON env var; see README).
+[project.optional-dependencies]
+qwen = [
+    "torch>=2.4",
+    "torchaudio>=2.4",
+    "qwen-tts",
+    "faster-whisper>=1.0",
+]
+
+[dependency-groups]
+dev = [
+    "pytest>=8.0",
+]
+
+[project.scripts]
+tts-audiobook = "tts_audiobook.cli:main"
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/tts_audiobook"]
+
+# Pin torch to a CUDA 12.8 build — the local NVIDIA driver supports CUDA up to 12.8,
+# and uv defaults to a CUDA-13 wheel which fails to initialize on this system.
+[[tool.uv.index]]
+name = "pytorch-cu128"
+url = "https://download.pytorch.org/whl/cu128"
+explicit = true
+
+[tool.uv.sources]
+torch = { index = "pytorch-cu128" }
+torchaudio = { index = "pytorch-cu128" }
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]

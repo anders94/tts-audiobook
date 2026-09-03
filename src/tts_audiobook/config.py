@@ -25,19 +25,30 @@ MAX_ITEM_CHARS = 800
 BATCH_SIZE = 24
 
 # --- pacing (seconds of silence before an item) ---
-GAP_QUOTE_CONTINUES = 0.05   # quotation continuing across a paragraph break
+# Same-voice seams need breath room: generated clips are silence-trimmed, so
+# the gap IS the entire pause, and a narrator jumping straight into the next
+# sentence sounds inhuman. A speaker CHANGE can be quicker — the incoming
+# voice has already "taken its breath" (listening feedback, 2026-09-03).
+GAP_QUOTE_CONTINUES = 0.40   # paragraph break inside one character's speech
 GAP_MIDSENTENCE_SPLIT = 0.12 # dialogue/narration split mid-sentence ("...," said she)
 GAP_ATTRIBUTION_TAG = 0.15   # prev ends with , ; or dash and the speaker changes
 GAP_SPEAKER_CHANGE = 0.35
-GAP_SAME_SPEAKER = 0.15
-GAP_SUBSPLIT = 0.06          # between sentence-split halves of one long segment
+GAP_SAME_SPEAKER = 0.45      # same voice, new segment (usually a new sentence)
+GAP_SUBSPLIT = 0.30          # sentence boundary within one long split segment
 GAP_SCENE_BREAK = 0.70       # visible gap in source offsets (blank line / scene break)
 GAP_AFTER_TITLE = 0.90
 SCENE_BREAK_OFFSET_GAP = 8   # source chars between segments that imply a scene break
 
 # --- audio post ---
+# Asymmetric trim pads: a tight cut at the head is fine (an inhale can be
+# inaudible), but the tail must keep the natural exhale decay — cutting it
+# mid-fall is audible — and fade smoothly into the gap (listening feedback,
+# 2026-09-03).
 TRIM_THRESHOLD_DBFS = -45.0
-TRIM_PAD_S = 0.03
+TRIM_LEAD_PAD_S = 0.03
+TRIM_TAIL_PAD_S = 0.18
+FADE_IN_S = 0.01
+FADE_OUT_S = 0.12
 TARGET_LUFS = -19.0
 MAX_GAIN_DB = 8.0
 PEAK_DBFS = -1.0

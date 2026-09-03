@@ -15,6 +15,7 @@ dependencies = [
     "platformdirs>=4.2",
     "pyloudnorm>=0.1",
     "mutagen>=1.47",
+    "praat-parselmouth>=0.4",
 ]
 
 # chatterbox-tts is deliberately NOT an extra here: it pins torch==2.6.0 and a
@@ -27,6 +28,9 @@ qwen = [
     "torchaudio>=2.4",
     "qwen-tts",
     "faster-whisper>=1.0",
+]
+kokoro = [
+    "kokoro>=0.9",
 ]
 
 [dependency-groups]

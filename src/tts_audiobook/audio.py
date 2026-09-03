@@ -29,18 +29,31 @@ def duration_s(wav: np.ndarray, sample_rate: int) -> float:
 
 def trim_silence(wav: np.ndarray, sample_rate: int,
                  threshold_dbfs: float = config.TRIM_THRESHOLD_DBFS,
-                 pad_s: float = config.TRIM_PAD_S) -> np.ndarray:
-    """Cut leading/trailing silence below threshold, keeping a small pad."""
+                 lead_pad_s: float = config.TRIM_LEAD_PAD_S,
+                 tail_pad_s: float = config.TRIM_TAIL_PAD_S) -> np.ndarray:
+    """Cut leading/trailing silence, keeping a natural tail and faded edges.
+
+    The head is cut tight (an inhale can plausibly be inaudible), but the
+    tail keeps `tail_pad_s` of decay and is faded to zero — a breath exhale
+    chopped mid-fall is more audible than the breath itself.
+    """
     if len(wav) == 0:
         return wav
     threshold = 10.0 ** (threshold_dbfs / 20.0)
     loud = np.flatnonzero(np.abs(wav) > threshold)
     if len(loud) == 0:
         return wav[:0]
-    pad = int(pad_s * sample_rate)
-    start = max(0, int(loud[0]) - pad)
-    end = min(len(wav), int(loud[-1]) + 1 + pad)
-    return wav[start:end]
+    start = max(0, int(loud[0]) - int(lead_pad_s * sample_rate))
+    end = min(len(wav), int(loud[-1]) + 1 + int(tail_pad_s * sample_rate))
+    out = wav[start:end].copy()
+
+    n_in = min(len(out), int(config.FADE_IN_S * sample_rate))
+    if n_in > 1:
+        out[:n_in] *= np.linspace(0.0, 1.0, n_in, dtype=np.float32)
+    n_out = min(len(out), int(config.FADE_OUT_S * sample_rate))
+    if n_out > 1:
+        out[-n_out:] *= np.linspace(1.0, 0.0, n_out, dtype=np.float32)
+    return out
 
 
 def _rms(wav: np.ndarray) -> float:

@@ -85,24 +85,45 @@ def build_reference(*, book_key: str, character: str, clip_path: Path,
                      sha256=sha256_file(dest), design_seed=None)
 
 
+# A neutral, punctuation-complete passage long enough (~10s) to capture the
+# designed voice's character for cloning.
+CALIBRATION_TEXT = ("The evening settled softly over the quiet town. "
+                    "She closed the book, listened to the rain against the "
+                    "window, and decided that tomorrow would look after itself.")
+
+_design_model = None
+
+
+def _design(instruct: str, seed: int) -> tuple[np.ndarray, int]:
+    global _design_model
+    import torch
+    from qwen_tts import Qwen3TTSModel
+
+    if _design_model is None:
+        try:
+            _design_model = Qwen3TTSModel.from_pretrained(
+                config.QWEN_DESIGN_MODEL_ID, device_map="cuda:0",
+                dtype=torch.bfloat16, attn_implementation="flash_attention_2")
+        except Exception:
+            _design_model = Qwen3TTSModel.from_pretrained(
+                config.QWEN_DESIGN_MODEL_ID, device_map="cuda:0",
+                dtype=torch.bfloat16)
+    torch.manual_seed(seed)
+    wavs, sr = _design_model.generate_voice_design(
+        text=[CALIBRATION_TEXT], language=["English"], instruct=[instruct])
+    return np.squeeze(np.asarray(wavs[0], dtype=np.float32)), int(sr)
+
+
 def build_designed_reference(*, book_key: str, character: str, spec: VoiceSpec,
                              seed: int) -> FrozenRef:
     """Shape a reference with the Qwen VoiceDesign model from the spec text.
 
-    Optional path for characters with no acceptable library match. The
-    designed audio is then frozen exactly like a library clip.
+    Fully synthetic identity — no real person. The designed audio is frozen
+    exactly like a library clip; the transcript is re-derived with Whisper
+    because a designed read can deviate from the calibration text, and a
+    transcript mismatch causes reference bleed in ICL cloning.
     """
-    import torch
-    from qwen_tts import Qwen3TTSModel
-
-    calibration = ("The quick brown fox jumps over the lazy dog, "
-                   "and the evening settled softly over the quiet town.")
-    torch.manual_seed(seed)
-    model = Qwen3TTSModel.from_pretrained(
-        config.QWEN_DESIGN_MODEL_ID, device_map="cuda:0", dtype=torch.bfloat16)
-    wavs, sr = model.generate_voice_design(
-        text=[calibration], language=["English"], instruct=[spec.describe()])
-    wav = np.squeeze(np.asarray(wavs[0], dtype=np.float32))
+    wav, sr = _design(spec.describe(), seed)
 
     dest_dir = config.REFS_DIR / book_key
     dest_dir.mkdir(parents=True, exist_ok=True)
@@ -110,7 +131,7 @@ def build_designed_reference(*, book_key: str, character: str, spec: VoiceSpec,
     sf.write(str(tmp), wav, sr, subtype="PCM_16")
     try:
         ref = build_reference(book_key=book_key, character=character,
-                              clip_path=tmp, clip_transcript=calibration)
+                              clip_path=tmp, clip_transcript="")
     finally:
         tmp.unlink(missing_ok=True)
     return FrozenRef(path=ref.path, transcript=ref.transcript,

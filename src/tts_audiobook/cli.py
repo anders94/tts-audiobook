@@ -100,6 +100,123 @@ def library_list() -> None:
     rprint(table)
 
 
+@library.command("morph")
+@click.argument("src_id", type=int)
+@click.option("--preset", "presets", multiple=True,
+              type=click.Choice(["deeper", "lighter", "older", "younger"]),
+              help="Named morphs; may repeat, applied together.")
+@click.option("--pitch", "pitch_semitones", type=float, default=None,
+              help="Median pitch shift in semitones (e.g. -2.5).")
+@click.option("--formant", "formant_ratio", type=float, default=None,
+              help="Formant ratio: <1 deeper/older, >1 lighter/younger.")
+@click.option("--range", "pitch_range_factor", type=float, default=None,
+              help="Intonation range factor: <1 flatter, >1 livelier.")
+@click.option("--tempo", type=float, default=None,
+              help="Speech rate factor: >1 faster, <1 slower. Changes rhythm, "
+                   "a strong identity cue.")
+@click.option("--sex", type=click.Choice(["male", "female"]), default=None,
+              help="Override tag (a strong morph can cross it).")
+@click.option("--age-band", "age_band",
+              type=click.Choice(["child", "teen", "young_adult", "adult",
+                                 "middle_aged", "elderly"]), default=None)
+@click.option("--notes", default=None)
+def library_morph(src_id: int, presets, pitch_semitones, formant_ratio,
+                  pitch_range_factor, tempo, sex, age_band, notes) -> None:
+    """Derive a new-sounding voice from clip SRC_ID, keeping its accent."""
+    from .library import LibraryError, import_clip_array, load_clip_audio
+    from .morph import PRESETS, morph
+
+    params: dict[str, float] = {}
+    for p in presets:
+        params.update(PRESETS[p])
+    if pitch_semitones is not None:
+        params["pitch_semitones"] = pitch_semitones
+    if formant_ratio is not None:
+        params["formant_ratio"] = formant_ratio
+    if pitch_range_factor is not None:
+        params["pitch_range_factor"] = pitch_range_factor
+    if tempo is not None:
+        params["tempo"] = tempo
+    if not params:
+        raise click.ClickException("Give at least one --preset or manual knob.")
+
+    with dbmod.db() as conn:
+        src = dbmod.clip_get(conn, src_id)
+        if not src:
+            raise click.ClickException(f"No clip #{src_id}")
+        wav, sr = load_clip_audio(src)
+        out = morph(wav, sr, **params)
+        desc = ", ".join(f"{k}={v}" for k, v in sorted(params.items()))
+        try:
+            row = import_clip_array(
+                conn, out, sr,
+                transcript=src["transcript"],  # words are unchanged
+                sex=sex or src["sex"], age_band=age_band or src["age_band"],
+                locale=src["locale"], region=src["region"],
+                quality=src["quality"], source=f"morph:{src_id}",
+                license=src["license"],
+                notes=notes or f"morph of #{src_id} ({desc})")
+        except LibraryError as e:
+            raise click.ClickException(str(e)) from e
+    rprint(f"[green]Morphed clip #{src_id} → #{row['id']}[/green] ({desc})")
+    rprint("[dim]Listen:[/dim] tts-audiobook library play " + str(row["id"]))
+
+
+@library.command("synth")
+@click.option("--voice", required=True,
+              help="Kokoro British voicepack, e.g. bf_emma, bm_george "
+                   "(bf_*=female, bm_*=male).")
+@click.option("--blend", default=None,
+              help="Second voicepack to mix in for a new identity.")
+@click.option("--blend-weight", type=float, default=0.5, show_default=True)
+@click.option("--speed", type=float, default=1.0, show_default=True)
+@click.option("--text", "text", default=None,
+              help="Custom seed text. Kokoro's delivery follows the text, and "
+                   "cloning inherits it — exclamatory text yields an excitable "
+                   "voice, measured text a calm one.")
+@click.option("--sex", type=click.Choice(["male", "female"]), default=None,
+              help="Tag override; inferred from the voicepack prefix if omitted.")
+@click.option("--age-band", "age_band",
+              type=click.Choice(["child", "teen", "young_adult", "adult",
+                                 "middle_aged", "elderly"]), default=None)
+@click.option("--region", default=None)
+@click.option("--notes", default=None)
+def library_synth(voice: str, blend: str | None, blend_weight: float,
+                  speed: float, text: str | None, sex, age_band, region,
+                  notes) -> None:
+    """Generate a fully synthetic en-GB seed clip with Kokoro."""
+    from .kokoro_seed import BRITISH_VOICES, synthesize
+    from .library import LibraryError, import_clip_array
+    from .voicebuild import CALIBRATION_TEXT
+
+    seed_text = text or CALIBRATION_TEXT
+    inferred = BRITISH_VOICES.get(voice)
+    if sex is None:
+        sex = (inferred[0] if inferred
+               else {"bf": "female", "bm": "male"}.get(voice[:2]))
+    if age_band is None and inferred:
+        age_band = inferred[1]
+
+    try:
+        wav, sr = synthesize(seed_text, voice, blend=blend,
+                             blend_weight=blend_weight, speed=speed)
+    except Exception as e:
+        raise click.ClickException(f"Kokoro synthesis failed: {e}") from e
+
+    source = f"kokoro:{voice}" + (f"+{blend}@{blend_weight}" if blend else "")
+    with dbmod.db() as conn:
+        try:
+            row = import_clip_array(
+                conn, wav, sr, transcript=seed_text,
+                sex=sex, age_band=age_band, locale="en-GB", region=region,
+                quality="good", source=source, license="Apache-2.0",
+                notes=notes or f"synthetic seed ({source})")
+        except LibraryError as e:
+            raise click.ClickException(str(e)) from e
+    rprint(f"[green]Synthesized clip #{row['id']}[/green] ({source})")
+    rprint("[dim]Listen:[/dim] tts-audiobook library play " + str(row["id"]))
+
+
 @library.command("play")
 @click.argument("clip_id", type=int)
 def library_play(clip_id: int) -> None:
@@ -184,17 +301,64 @@ def inspect_cmd(book_path: Path) -> None:
 @main.command("cast")
 @click.argument("book_path", type=click.Path(exists=True, dir_okay=False, path_type=Path))
 @click.option("--recast", is_flag=True, help="Redo already-cast speakers too.")
-def cast_cmd(book_path: Path, recast: bool) -> None:
-    """Match every speaker to a library clip and freeze reference voices."""
+@click.option("--design", is_flag=True,
+              help="Generate every voice from its spec with Qwen VoiceDesign "
+                   "(fully synthetic) instead of matching library clips.")
+def cast_cmd(book_path: Path, recast: bool, design: bool) -> None:
+    """Freeze a reference voice for every speaker (library match or design)."""
     from .studio import run_casting
     book = _open_book(book_path)
     out_dir = _resolve_output_dir(book, None)
     with dbmod.db() as conn:
         book_id = _ensure_book_row(conn, book, out_dir)
         try:
-            run_casting(conn, book, book_id, recast=recast)
+            run_casting(conn, book, book_id, recast=recast, design=design)
         except RuntimeError as e:
             raise click.ClickException(str(e)) from e
+
+
+@main.command("assign")
+@click.argument("book_path", type=click.Path(exists=True, dir_okay=False, path_type=Path))
+@click.option("--character", required=True,
+              help="Speaker to reassign (canonical name, or 'narrator').")
+@click.option("--clip", "clip_id", type=int, required=True,
+              help="Library clip id to freeze as this character's voice.")
+def assign_cmd(book_path: Path, character: str, clip_id: int) -> None:
+    """Pin one character to a specific library clip, overriding the scorer."""
+    import json as jsonlib
+    from dataclasses import asdict
+
+    from .book import book_output_subdir
+    from .studio import spec_for_speaker
+    from .voicebuild import build_reference
+
+    book = _open_book(book_path)
+    out_dir = _resolve_output_dir(book, None)
+    if character.lower() == "narrator":
+        character = NARRATOR_KEY
+    with dbmod.db() as conn:
+        book_id = _ensure_book_row(conn, book, out_dir)
+        row = dbmod.clip_get(conn, clip_id)
+        if not row:
+            raise click.ClickException(f"No clip #{clip_id}")
+        speakers = {k for k, _ in speakers_by_importance(book)}
+        if character not in speakers:
+            raise click.ClickException(
+                f"{character!r} is not a speaker in this book.")
+        ref = build_reference(book_key=book_output_subdir(book),
+                              character=character,
+                              clip_path=Path(row["path"]),
+                              clip_transcript=row["transcript"])
+        dbmod.cast_upsert(
+            conn, book_id, character,
+            spec_json=jsonlib.dumps(asdict(spec_for_speaker(book, character))),
+            library_clip_id=clip_id,
+            ref_path=str(ref.path), ref_transcript=ref.transcript,
+            ref_sha256=ref.sha256, design_seed=None, audition_seed=0,
+            status="accepted",
+        )
+    shown = "(narrator)" if character == NARRATOR_KEY else character
+    rprint(f"[green]{shown}[/green] → clip #{clip_id} (frozen, accepted)")
 
 
 @main.command("audition")

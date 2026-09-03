@@ -73,6 +73,34 @@ def import_clip(conn: sqlite3.Connection, audio_path: Path, *,
     return dbmod.clip_get(conn, clip_id)
 
 
+def import_clip_array(conn: sqlite3.Connection, wav, sample_rate: int, *,
+                      transcript: str | None, sex: str | None,
+                      age_band: str | None, locale: str | None,
+                      region: str | None, quality: str | None,
+                      source: str | None, license: str | None,
+                      notes: str | None) -> sqlite3.Row:
+    """Import generated/derived audio (morph, synth seed) as a library clip."""
+    import tempfile
+
+    import soundfile as sf_
+
+    with tempfile.NamedTemporaryFile(suffix=".wav", delete=False) as tmp:
+        tmp_path = Path(tmp.name)
+    try:
+        sf_.write(str(tmp_path), wav, sample_rate, subtype="PCM_16")
+        return import_clip(conn, tmp_path, sex=sex, age_band=age_band,
+                           locale=locale, region=region, quality=quality,
+                           source=source, license=license, notes=notes,
+                           transcript=transcript)
+    finally:
+        tmp_path.unlink(missing_ok=True)
+
+
+def load_clip_audio(row: sqlite3.Row):
+    wav, sr = sf.read(row["path"], dtype="float32", always_2d=True)
+    return wav.mean(axis=1), sr
+
+
 def clip_info(row: sqlite3.Row) -> ClipInfo:
     return ClipInfo(
         clip_id=int(row["id"]),

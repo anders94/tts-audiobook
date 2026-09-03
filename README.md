@@ -22,7 +22,10 @@ torch/transformers versions). Give it its own venv and point the app at it:
 
 ```bash
 uv venv ~/.venvs/chatterbox --python 3.11
-VIRTUAL_ENV=~/.venvs/chatterbox uv pip install chatterbox-tts
+# setuptools<81 is required: chatterbox's perth watermarker imports
+# pkg_resources, removed in newer setuptools, and fails silently without it
+# ("TypeError: 'NoneType' object is not callable" at load).
+VIRTUAL_ENV=~/.venvs/chatterbox uv pip install chatterbox-tts "setuptools<81"
 export CHATTERBOX_PYTHON=~/.venvs/chatterbox/bin/python
 ```
 
@@ -44,6 +47,19 @@ text, prepending ~1s of stray words to every rendered segment.
 tts-audiobook library import clip.wav --sex female --age-band young_adult \
     --locale en-GB --region "Southern England" --source vctk --license CC-BY-4.0
 tts-audiobook library list
+
+# 1b. Or create voices instead of importing recordings:
+#     - fully synthetic en-GB seeds via Kokoro (blendable for new identities)
+tts-audiobook library synth --voice bf_emma
+tts-audiobook library synth --voice bm_george --blend bm_lewis --blend-weight 0.5
+#     - derive a new-sounding voice from any clip, keeping its accent
+#       (independent pitch/formant shifts via Praat; presets: deeper, lighter,
+#        older, younger, flatter, livelier)
+tts-audiobook library morph 3 --preset deeper
+tts-audiobook library morph 3 --pitch 2.0 --formant 1.06 --age-band young_adult
+# (cast --design generates voices from specs with Qwen VoiceDesign — fully
+#  synthetic but accent drifts American; use library clips for accent-critical
+#  books)
 
 # 2. Inspect a book: structure, speakers, voice-spec coverage
 tts-audiobook inspect 1342-pride-and-prejudice.json

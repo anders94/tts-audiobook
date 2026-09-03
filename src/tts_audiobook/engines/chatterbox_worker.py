@@ -39,12 +39,18 @@ def _generate(req: dict) -> dict:
     seed = int(req.get("seed") or 0)
     paths = []
     sr = model.sr
+    extra = {}
+    if req.get("exaggeration") is not None:
+        extra["exaggeration"] = float(req["exaggeration"])
+    if req.get("cfg_weight") is not None:
+        extra["cfg_weight"] = float(req["cfg_weight"])
     for i, text in enumerate(req["texts"]):
         torch.manual_seed(seed)
         wav = model.generate(
             text,
             audio_prompt_path=req["ref_audio"],
             language_id=req.get("language_id", "en"),
+            **extra,
         )
         wav = wav.squeeze(0).cpu().numpy()
         dest = out_dir / f"chunk_{i:04d}.wav"
@@ -55,6 +61,17 @@ def _generate(req: dict) -> dict:
 
 
 def main() -> None:
+    import traceback
+
+    # Libraries in this venv print progress bars and warnings; keep the JSON
+    # reply channel clean by routing all stray stdout to stderr.
+    reply_stream = sys.stdout
+    sys.stdout = sys.stderr
+
+    def reply_json(obj: dict) -> None:
+        reply_stream.write(json.dumps(obj) + "\n")
+        reply_stream.flush()
+
     for line in sys.stdin:
         line = line.strip()
         if not line:
@@ -67,13 +84,14 @@ def main() -> None:
             elif req["cmd"] == "generate":
                 reply = _generate(req)
             elif req["cmd"] == "quit":
-                print(json.dumps({"ok": True}), flush=True)
+                reply_json({"ok": True})
                 return
             else:
                 reply = {"ok": False, "error": f"unknown cmd {req.get('cmd')!r}"}
         except Exception as e:  # noqa: BLE001 — everything crosses as JSON
-            reply = {"ok": False, "error": f"{type(e).__name__}: {e}"}
-        print(json.dumps(reply), flush=True)
+            reply = {"ok": False,
+                     "error": f"{type(e).__name__}: {e}\n{traceback.format_exc()}"}
+        reply_json(reply)
 
 
 if __name__ == "__main__":

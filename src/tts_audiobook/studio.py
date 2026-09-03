@@ -12,12 +12,12 @@ from rich.table import Table
 
 from . import db as dbmod
 from .book import Book, book_output_subdir, character_spec_for, sample_line_for, speakers_by_importance
-from .casting import cast_book
+from .casting import CastingChoice, cast_book
 from .config import NARRATOR_KEY
 from .engines.base import Engine
 from .library import clip_info, play_sample
-from .specs import AccentSpec, VoiceSpec
-from .voicebuild import build_reference
+from .specs import AccentSpec, VoiceSpec, parse_voice
+from .voicebuild import build_designed_reference, build_reference
 
 # Narrator fallback when the JSON has no production block: a neutral,
 # educated adult voice in the book's presumed locale.
@@ -72,13 +72,24 @@ def spec_for_speaker(book: Book, speaker_key: str) -> VoiceSpec:
     return DEFAULT_CHARACTER_SPEC
 
 
+def _design_seed_for(character: str) -> int:
+    """Stable per-character starting seed so a recast reproduces the voice."""
+    import zlib
+    return zlib.crc32(character.encode()) & 0xFFFF
+
+
 def run_casting(conn: sqlite3.Connection, book: Book, book_id: int,
-                *, recast: bool = False) -> None:
-    """Match every speaker to a library clip and freeze references."""
+                *, recast: bool = False, design: bool = False) -> None:
+    """Freeze a reference voice for every speaker.
+
+    Default: match against the accent clip library, falling back to a
+    VoiceDesign-generated voice when no clip qualifies. With design=True,
+    every voice is generated from its spec — fully synthetic, no library.
+    """
     clips_rows = dbmod.clip_list(conn)
-    if not clips_rows:
+    if not clips_rows and not design:
         raise RuntimeError("Accent library is empty; import clips first "
-                           "(tts-audiobook library import …).")
+                           "(tts-audiobook library import …) or cast --design.")
     clips = [clip_info(r) for r in clips_rows]
     rows_by_id = {int(r["id"]): r for r in clips_rows}
 
@@ -93,26 +104,38 @@ def run_casting(conn: sqlite3.Connection, book: Book, book_id: int,
         rprint("[green]Cast is already complete.[/green] Use --recast to redo.")
         return
 
-    choices = cast_book(triples, clips)
     book_key = book_output_subdir(book)
     specs = {t[0]: t[1] for t in triples}
+    if design:
+        choices = [CastingChoice(character=t[0], clip_id=None, score=0.0)
+                   for t in triples]
+    else:
+        choices = cast_book(triples, clips)
 
     table = Table(title="Casting")
     table.add_column("Speaker")
-    table.add_column("Clip", justify="right")
+    table.add_column("Voice", justify="right")
     table.add_column("Score", justify="right")
     for choice in choices:
+        spec = specs[choice.character]
         if choice.clip_id is None:
-            rprint(f"[red]No library clip matches {choice.character!r} "
-                   "(sex filter removed every candidate).[/red]")
-            continue
-        row = rows_by_id[choice.clip_id]
-        ref = build_reference(
-            book_key=book_key, character=choice.character,
-            clip_path=Path(row["path"]), clip_transcript=row["transcript"])
+            if not design:
+                rprint(f"[yellow]No library clip matches {choice.character!r}; "
+                       "designing a synthetic voice instead.[/yellow]")
+            seed = _design_seed_for(choice.character)
+            ref = build_designed_reference(
+                book_key=book_key, character=choice.character,
+                spec=spec, seed=seed)
+            label = f"designed (seed {seed})"
+        else:
+            row = rows_by_id[choice.clip_id]
+            ref = build_reference(
+                book_key=book_key, character=choice.character,
+                clip_path=Path(row["path"]), clip_transcript=row["transcript"])
+            label = f"clip #{choice.clip_id}"
         dbmod.cast_upsert(
             conn, book_id, choice.character,
-            spec_json=json.dumps(asdict(specs[choice.character])),
+            spec_json=json.dumps(asdict(spec)),
             library_clip_id=choice.clip_id,
             ref_path=str(ref.path),
             ref_transcript=ref.transcript,
@@ -121,7 +144,8 @@ def run_casting(conn: sqlite3.Connection, book: Book, book_id: int,
             audition_seed=0,
             status="proposed",
         )
-        table.add_row(choice.character, f"#{choice.clip_id}", f"{choice.score:.0f}")
+        table.add_row(choice.character, label,
+                      "—" if design else f"{choice.score:.0f}")
     rprint(table)
 
 
@@ -173,7 +197,8 @@ def run_audition(conn: sqlite3.Connection, engine: Engine, book: Book,
                                        language=book.language, seed=seed)
             _play_wav(wavs[0], sr)
             choice = click.prompt(
-                "  [a]ccept / [r]eroll seed / [p]lay again / [s]kip",
+                "  [a]ccept / [r]eroll take / [d]esign new voice / "
+                "[p]lay again / [s]kip",
                 default="a", show_default=False).strip().lower()
             if choice == "a":
                 dbmod.cast_upsert(conn, book_id, key, status="accepted",
@@ -181,6 +206,25 @@ def run_audition(conn: sqlite3.Connection, engine: Engine, book: Book,
                 break
             if choice == "r":
                 seed += 1
+                continue
+            if choice == "d":
+                # New synthetic identity from the spec (not just a new take).
+                spec_json = row["spec_json"]
+                spec = (parse_voice(json.loads(spec_json)) if spec_json
+                        else spec_for_speaker(book, key)) or spec_for_speaker(book, key)
+                new_seed = int(row["design_seed"] or _design_seed_for(key)) + 1
+                rprint(f"[dim]Designing a new voice (seed {new_seed})…[/dim]")
+                ref = build_designed_reference(
+                    book_key=book_output_subdir(book), character=key,
+                    spec=spec, seed=new_seed)
+                dbmod.cast_upsert(conn, book_id, key,
+                                  library_clip_id=None,
+                                  ref_path=str(ref.path),
+                                  ref_transcript=ref.transcript,
+                                  ref_sha256=ref.sha256,
+                                  design_seed=ref.design_seed,
+                                  status="proposed")
+                row = dbmod.cast_get(conn, book_id, key)
                 continue
             if choice == "p":
                 continue

@@ -1,8 +1,14 @@
 from __future__ import annotations
 
+import os
 from pathlib import Path
 
 from platformdirs import user_data_dir
+
+# Long renders fragment the CUDA allocator (observed: 7.4 GiB reserved-but-
+# unallocated after 34 chapters → OOM). Must be set before torch initializes
+# CUDA; config is imported ahead of any engine, so this is the safe spot.
+os.environ.setdefault("PYTORCH_CUDA_ALLOC_CONF", "expandable_segments:True")
 
 APP_NAME = "tts-audiobook"
 NARRATOR_KEY = "__narrator__"
@@ -23,6 +29,10 @@ WHISPER_MODEL_ID = "base.en"
 # Shorter than v1's 1500: better QC granularity and fewer long-input glitches.
 MAX_ITEM_CHARS = 800
 BATCH_SIZE = 24
+# Cap total characters per batch too: a run of maximum-length items (e.g. a
+# 14k-char letter split into ~18 x 800) OOMs a 24 GB card if batched by count
+# alone.
+BATCH_MAX_CHARS = 4000
 
 # --- pacing (seconds of silence before an item) ---
 # Same-voice seams need breath room: generated clips are silence-trimmed, so

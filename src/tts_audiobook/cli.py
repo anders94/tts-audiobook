@@ -7,8 +7,8 @@ from rich import print as rprint
 from rich.table import Table
 
 from . import db as dbmod
-from .book import (Book, book_output_subdir, character_spec_for, load_book,
-                   speakers_by_importance)
+from .book import (Book, apply_speaker_merges, book_output_subdir,
+                   character_spec_for, load_book, speakers_by_importance)
 from .config import NARRATOR_KEY, OUTPUT_ROOT, ensure_dirs
 
 
@@ -29,12 +29,15 @@ def _resolve_output_dir(book: Book, override: Path | None) -> Path:
 
 
 def _ensure_book_row(conn, book: Book, output_dir: Path) -> int:
-    return dbmod.book_upsert(
+    """Upsert the book row and apply its stored speaker merges to `book`."""
+    book_id = dbmod.book_upsert(
         conn, book.source_path,
         title=book.title, author=book.author,
         gutenberg_id=book.gutenberg_id,
         output_dir=output_dir,
     )
+    apply_speaker_merges(book, dbmod.merges_get_all(conn, book_id))
+    return book_id
 
 
 def _engine_for(conn, book_id: int, override: str | None):
@@ -315,6 +318,41 @@ def cast_cmd(book_path: Path, recast: bool, design: bool) -> None:
             run_casting(conn, book, book_id, recast=recast, design=design)
         except RuntimeError as e:
             raise click.ClickException(str(e)) from e
+
+
+@main.command("merge")
+@click.argument("book_path", type=click.Path(exists=True, dir_okay=False, path_type=Path))
+@click.option("--from", "from_name", default=None,
+              help="Duplicate speaker name to fold away.")
+@click.option("--into", "into_name", default=None,
+              help="Canonical speaker name that keeps the voice.")
+@click.option("--list", "list_", is_flag=True, help="Show stored merges.")
+def merge_cmd(book_path: Path, from_name: str | None, into_name: str | None,
+              list_: bool) -> None:
+    """Fold duplicate speaker identities into one (local fix; the real fix
+    is upstream aliases in the book JSON)."""
+    book = _open_book(book_path)
+    out_dir = _resolve_output_dir(book, None)
+    with dbmod.db() as conn:
+        book_id = _ensure_book_row(conn, book, out_dir)
+        if list_:
+            merges = dbmod.merges_get_all(conn, book_id)
+            if not merges:
+                rprint("[dim]No merges stored.[/dim]")
+            for f, t in sorted(merges.items()):
+                rprint(f"  {f} → {t}")
+            return
+        if not (from_name and into_name):
+            raise click.ClickException("Pass both --from and --into (or --list).")
+        # Validate against the raw roster (`book` has merges applied already).
+        raw_speakers = {k for k, _ in speakers_by_importance(_open_book(book_path))}
+        for name in (from_name, into_name):
+            if name not in raw_speakers:
+                raise click.ClickException(f"{name!r} is not a speaker in this book.")
+        dbmod.merge_set(conn, book_id, from_name, into_name)
+        dbmod.cast_delete(conn, book_id, from_name)  # stale row, if any
+    rprint(f"[green]Merged:[/green] {from_name} → {into_name}")
+    rprint("[dim]Re-run `cast` if the merged speaker had no voice yet.[/dim]")
 
 
 @main.command("assign")

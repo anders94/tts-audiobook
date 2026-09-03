@@ -52,6 +52,15 @@ CREATE TABLE IF NOT EXISTS cast_members (
     PRIMARY KEY (book_id, character)
 );
 
+-- Local fix-ups for one character appearing under multiple upstream names
+-- ("Kitty Bennet" / "Catherine Bennet"); ideally solved by upstream aliases.
+CREATE TABLE IF NOT EXISTS speaker_merges (
+    book_id   INTEGER NOT NULL REFERENCES books(id) ON DELETE CASCADE,
+    from_name TEXT NOT NULL,
+    into_name TEXT NOT NULL,
+    PRIMARY KEY (book_id, from_name)
+);
+
 CREATE TABLE IF NOT EXISTS chapter_status (
     book_id        INTEGER NOT NULL REFERENCES books(id) ON DELETE CASCADE,
     chapter_number INTEGER NOT NULL,
@@ -203,6 +212,26 @@ def cast_delete(conn: sqlite3.Connection, book_id: int, character: str | None = 
     else:
         conn.execute("DELETE FROM cast_members WHERE book_id = ? AND character = ?",
                      (book_id, character))
+
+
+# ---------- speaker merges ----------
+
+def merge_set(conn: sqlite3.Connection, book_id: int, from_name: str,
+              into_name: str) -> None:
+    conn.execute(
+        "INSERT INTO speaker_merges (book_id, from_name, into_name) "
+        "VALUES (?, ?, ?) "
+        "ON CONFLICT(book_id, from_name) DO UPDATE SET into_name = excluded.into_name",
+        (book_id, from_name, into_name),
+    )
+    conn.commit()
+
+
+def merges_get_all(conn: sqlite3.Connection, book_id: int) -> dict[str, str]:
+    rows = conn.execute(
+        "SELECT from_name, into_name FROM speaker_merges WHERE book_id = ?",
+        (book_id,)).fetchall()
+    return {r["from_name"]: r["into_name"] for r in rows}
 
 
 # ---------- chapter status ----------

@@ -106,6 +106,26 @@ def _render_one(engine: Engine, prompt, item: RenderItem, *, language: str,
     return best  # type: ignore[return-value]
 
 
+def make_batches(bucket: list[RenderItem], engine_max: int) -> list[list[RenderItem]]:
+    """Chunk a voice's items by count AND total characters — batch memory
+    scales with the longest text times batch size, and a run of long items
+    (a letter read aloud) OOMs if batched by count alone."""
+    max_count = max(1, min(config.BATCH_SIZE, engine_max))
+    batches: list[list[RenderItem]] = []
+    cur: list[RenderItem] = []
+    cur_chars = 0
+    for item in bucket:
+        if cur and (len(cur) >= max_count
+                    or cur_chars + len(item.text) > config.BATCH_MAX_CHARS):
+            batches.append(cur)
+            cur, cur_chars = [], 0
+        cur.append(item)
+        cur_chars += len(item.text)
+    if cur:
+        batches.append(cur)
+    return batches
+
+
 def render_chapter(conn: sqlite3.Connection, engine: Engine, book: Book,
                    book_id: int, chapter: Chapter, cast: dict[str, CastVoice],
                    output_path: Path, *, run_qc: bool = True) -> None:
@@ -122,9 +142,7 @@ def render_chapter(conn: sqlite3.Connection, engine: Engine, book: Book,
     for speaker_key, bucket in bucket_by_speaker(items).items():
         cv = cast[speaker_key]
         prompt = engine.clone_prompt(cv.ref_path, cv.ref_transcript)
-        batch_size = max(1, min(config.BATCH_SIZE, engine.max_batch))
-        for i in range(0, len(bucket), batch_size):
-            batch = bucket[i:i + batch_size]
+        for batch in make_batches(bucket, engine.max_batch):
             wavs, sr = engine.generate([b.text for b in batch], prompt,
                                        language=book.language, seed=cv.seed)
             sample_rate = sr
@@ -159,6 +177,12 @@ def render_chapter(conn: sqlite3.Connection, engine: Engine, book: Book,
         pieces.append(rendered[item.index])
     full = audiomod.concat(pieces)
     audiomod.encode_mp3(full, sample_rate, output_path)
+
+    try:
+        import torch
+        torch.cuda.empty_cache()
+    except Exception:
+        pass
 
 
 def title_chapter(book: Book) -> Chapter:

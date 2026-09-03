@@ -62,3 +62,21 @@ def test_bucket_by_speaker_keeps_items():
     buckets = bucket_by_speaker(items)
     assert sorted(buckets) == ["A", NARRATOR_KEY]
     assert [i.index for i in buckets[NARRATOR_KEY]] == [0, 2]
+
+
+def test_make_batches_caps_count_and_chars():
+    from tts_audiobook.render import make_batches
+    from tts_audiobook.planning import RenderItem
+
+    long_items = [RenderItem(index=i, speaker_key="A", text="x" * 790,
+                             gap_before_s=0.0) for i in range(18)]
+    batches = make_batches(long_items, engine_max=24)
+    assert all(sum(len(i.text) for i in b) <= 4000 for b in batches)
+    assert sum(len(b) for b in batches) == 18
+
+    short_items = [RenderItem(index=i, speaker_key="A", text="hi there",
+                              gap_before_s=0.0) for i in range(60)]
+    batches = make_batches(short_items, engine_max=24)
+    assert all(len(b) <= 24 for b in batches)
+
+    assert make_batches([], engine_max=24) == []

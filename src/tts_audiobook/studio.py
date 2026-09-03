@@ -36,17 +36,39 @@ _MALE_TITLES = ("mr.", "mr ", "sir ", "lord ", "colonel ", "captain ",
                 "general ", "major ", "master ", "uncle ", "king ", "count ",
                 "duke ", "monsieur", "dr ", "reverend ", "rev.")
 
+# Common English given names for untitled speakers ("Jane Bennet",
+# "Charles Bingley"). Skewed toward classic literature; a real voice spec
+# always wins over this guess.
+_FEMALE_NAMES = {
+    "jane", "kitty", "lydia", "mary", "charlotte", "caroline", "maria",
+    "elizabeth", "lizzy", "eliza", "georgiana", "anne", "emma", "harriet",
+    "fanny", "susan", "sarah", "hannah", "margaret", "catherine", "eleanor",
+    "marianne", "elinor", "amy", "beth", "meg", "jo", "alice", "lucy",
+    "dorothea", "esther", "agnes", "clara", "helen", "sophia", "julia",
+}
+_MALE_NAMES = {
+    "charles", "william", "george", "fitzwilliam", "james", "john", "henry",
+    "edward", "thomas", "richard", "robert", "arthur", "frederick", "francis",
+    "walter", "hugh", "philip", "peter", "david", "samuel", "joseph",
+    "nicholas", "edmund", "frank", "fred", "tom", "dick", "harry",
+}
+
 
 def _infer_sex_from_name(name: str) -> str | None:
-    """Honorific-based fallback when a character has no voice spec.
+    """Honorific- then given-name-based fallback when there is no voice spec.
 
-    Keeps casting from handing Mrs. Bennet a male clip before the upstream
-    JSON gains voice blocks; a real spec always wins over this guess.
+    Keeps casting from handing Mrs. Bennet (or Kitty) a male clip before the
+    upstream JSON gains voice blocks; a real spec always wins over this guess.
     """
     n = name.strip().lower()
     if n.startswith(_FEMALE_TITLES):
         return "female"
     if n.startswith(_MALE_TITLES):
+        return "male"
+    first = n.split()[0] if n.split() else ""
+    if first in _FEMALE_NAMES:
+        return "female"
+    if first in _MALE_NAMES:
         return "male"
     return None
 

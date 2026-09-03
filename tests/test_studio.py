@@ -20,8 +20,25 @@ def test_infer_sex_from_honorifics():
     assert _infer_sex_from_name("Mr. Fitzwilliam Darcy") == "male"
     assert _infer_sex_from_name("Sir William Lucas") == "male"
     assert _infer_sex_from_name("Colonel Fitzwilliam") == "male"
-    assert _infer_sex_from_name("Jane Bennet") is None
     assert _infer_sex_from_name("Nicholls") is None
+
+
+def test_infer_sex_from_given_names():
+    assert _infer_sex_from_name("Jane Bennet") == "female"
+    assert _infer_sex_from_name("Kitty Bennet") == "female"
+    assert _infer_sex_from_name("Catherine Bennet") == "female"
+    assert _infer_sex_from_name("Charles Bingley") == "male"
+    assert _infer_sex_from_name("Fitzwilliam Darcy") == "male"
+    assert _infer_sex_from_name("young Lucas") is None
+
+
+def test_apply_speaker_merges(tmp_path):
+    from tts_audiobook.book import apply_speaker_merges, load_book
+    book = load_book(write_enriched(tmp_path))
+    apply_speaker_merges(book, {"Elizabeth Bennet": "Mrs. Long"})
+    speakers = {s.speaker_key for ch in book.chapters for s in ch.segments}
+    assert "Elizabeth Bennet" not in speakers
+    assert "Mrs. Long" in speakers
 
 
 def test_spec_for_speaker_prefers_real_spec(tmp_path):

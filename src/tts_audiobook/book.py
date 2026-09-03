@@ -111,6 +111,17 @@ def load_book(path: Path) -> Book:
     )
 
 
+def apply_speaker_merges(book: Book, merges: dict[str, str]) -> None:
+    """Collapse duplicate speaker identities in place (one hop of chaining)."""
+    if not merges:
+        return
+    resolved = {f: merges.get(t, t) for f, t in merges.items()}
+    for ch in book.chapters:
+        for s in ch.segments:
+            if s.speaker_key in resolved:
+                s.speaker_key = resolved[s.speaker_key]
+
+
 def speaker_counts(book: Book) -> Counter[str]:
     """How many segments each speaker_key has, across the whole book."""
     c: Counter[str] = Counter()

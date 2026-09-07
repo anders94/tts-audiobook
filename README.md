@@ -1,7 +1,7 @@
 # tts-audiobook v2
 
 Spec-driven audiobook studio. Consumes the annotated book JSON produced by
-[gutenberg-reader](../gutenberg-reader) — including the `production` block and
+[gutenberg-reader](https://github.com/anders94/gutenberg-reader) — including the `production` block and
 per-character `voice` specs (sex, age band, accent, register, pitch, timbre) —
 casts each character against a tagged library of accent reference clips, and
 renders the book with a local voice-cloning TTS engine on CUDA.
@@ -44,41 +44,41 @@ text, prepending ~1s of stray words to every rendered segment.
 
 ```bash
 # 1. Build the accent clip library (once, shared across books)
-tts-audiobook library import clip.wav --sex female --age-band young_adult \
+uv run tts-audiobook library import clip.wav --sex female --age-band young_adult \
     --locale en-GB --region "Southern England" --source vctk --license CC-BY-4.0
-tts-audiobook library list
+uv run tts-audiobook library list
 
 # 1b. Or create voices instead of importing recordings:
 #     - fully synthetic en-GB seeds via Kokoro (blendable for new identities)
-tts-audiobook library synth --voice bf_emma
-tts-audiobook library synth --voice bm_george --blend bm_lewis --blend-weight 0.5
+uv run tts-audiobook library synth --voice bf_emma
+uv run tts-audiobook library synth --voice bm_george --blend bm_lewis --blend-weight 0.5
 #     - derive a new-sounding voice from any clip, keeping its accent
 #       (independent pitch/formant shifts via Praat; presets: deeper, lighter,
 #        older, younger, flatter, livelier)
-tts-audiobook library morph 3 --preset deeper
-tts-audiobook library morph 3 --pitch 2.0 --formant 1.06 --age-band young_adult
+uv run tts-audiobook library morph 3 --preset deeper
+uv run tts-audiobook library morph 3 --pitch 2.0 --formant 1.06 --age-band young_adult
 # (cast --design generates voices from specs with Qwen VoiceDesign — fully
 #  synthetic but accent drifts American; use library clips for accent-critical
 #  books)
 
 # 2. Inspect a book: structure, speakers, voice-spec coverage
-tts-audiobook inspect 1342-pride-and-prejudice.json
+uv run tts-audiobook inspect 1342-pride-and-prejudice.json
 
 # 3. Cast: deterministic spec→clip matching, frozen references built
-tts-audiobook cast 1342-pride-and-prejudice.json
+uv run tts-audiobook cast 1342-pride-and-prejudice.json
 
 # 4. Audition: listen to one line per voice; accept / reroll / override
-tts-audiobook audition 1342-pride-and-prejudice.json
+uv run tts-audiobook audition 1342-pride-and-prejudice.json
 
 # 5. (optional) Compare engines on one chapter
-tts-audiobook bakeoff 1342-pride-and-prejudice.json --chapter 3
+uv run tts-audiobook bakeoff 1342-pride-and-prejudice.json --chapter 3
 
 # 6. Render (resumable per chapter; QC pass with auto-retry)
-tts-audiobook perform 1342-pride-and-prejudice.json
+uv run tts-audiobook perform 1342-pride-and-prejudice.json
 
 # 7. Package: .m4b with chapter markers + ID3-tagged MP3s + RSS feed
-tts-audiobook package 1342-pride-and-prejudice.json
-tts-audiobook qc-report 1342-pride-and-prejudice.json
+uv run tts-audiobook package 1342-pride-and-prejudice.json
+uv run tts-audiobook qc-report 1342-pride-and-prejudice.json
 ```
 
 ## Accent clip sources

@@ -1,4 +1,4 @@
-# tts-audiobook v2
+# tts-audiobook
 
 Spec-driven audiobook studio. Consumes the annotated book JSON produced by
 [gutenberg-reader](https://github.com/anders94/gutenberg-reader) — including the `production` block and

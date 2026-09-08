@@ -10,7 +10,7 @@ from rich.progress import (BarColumn, MofNCompleteColumn, Progress, TextColumn,
                            TimeElapsedColumn, TimeRemainingColumn)
 
 from . import audio as audiomod
-from . import config
+from . import config, device
 from . import db as dbmod
 from . import qc as qcmod
 from .book import Book, Chapter, Segment, slugify
@@ -178,11 +178,7 @@ def render_chapter(conn: sqlite3.Connection, engine: Engine, book: Book,
     full = audiomod.concat(pieces)
     audiomod.encode_mp3(full, sample_rate, output_path)
 
-    try:
-        import torch
-        torch.cuda.empty_cache()
-    except Exception:
-        pass
+    device.empty_cache()
 
 
 def title_chapter(book: Book) -> Chapter:

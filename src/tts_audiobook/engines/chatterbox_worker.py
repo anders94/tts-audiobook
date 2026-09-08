@@ -25,7 +25,21 @@ def _load():
     if _model is None:
         import torch
         from chatterbox.mtl_tts import ChatterboxMultilingualTTS
-        device = "cuda" if torch.cuda.is_available() else "cpu"
+        if torch.cuda.is_available():
+            device = "cuda"
+        elif torch.backends.mps.is_available():
+            device = "mps"
+            # Chatterbox checkpoints were saved from CUDA; torch.load must be
+            # told to map them onto MPS (same patch as chatterbox's own
+            # example_for_mac.py).
+            _orig_load = torch.load
+
+            def _load_to_mps(*args, **kwargs):
+                kwargs.setdefault("map_location", torch.device("mps"))
+                return _orig_load(*args, **kwargs)
+            torch.load = _load_to_mps
+        else:
+            device = "cpu"
         _model = ChatterboxMultilingualTTS.from_pretrained(device=device)
     return _model
 

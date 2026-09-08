@@ -9,6 +9,8 @@ from platformdirs import user_data_dir
 # unallocated after 34 chapters → OOM). Must be set before torch initializes
 # CUDA; config is imported ahead of any engine, so this is the safe spot.
 os.environ.setdefault("PYTORCH_CUDA_ALLOC_CONF", "expandable_segments:True")
+# Sets PYTORCH_ENABLE_MPS_FALLBACK for Macs, same timing constraint.
+from . import device as _device  # noqa: E402,F401
 
 APP_NAME = "tts-audiobook"
 NARRATOR_KEY = "__narrator__"

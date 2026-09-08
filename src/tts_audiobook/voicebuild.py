@@ -7,7 +7,7 @@ import numpy as np
 import soundfile as sf
 
 from . import audio as audiomod
-from . import config
+from . import config, device
 from .book import slugify
 from .library import sha256_file
 from .specs import VoiceSpec
@@ -100,14 +100,17 @@ def _design(instruct: str, seed: int) -> tuple[np.ndarray, int]:
     from qwen_tts import Qwen3TTSModel
 
     if _design_model is None:
-        try:
+        kwargs = device.load_kwargs()
+        if device.is_cuda():
+            try:
+                _design_model = Qwen3TTSModel.from_pretrained(
+                    config.QWEN_DESIGN_MODEL_ID,
+                    attn_implementation="flash_attention_2", **kwargs)
+            except Exception:
+                pass
+        if _design_model is None:
             _design_model = Qwen3TTSModel.from_pretrained(
-                config.QWEN_DESIGN_MODEL_ID, device_map="cuda:0",
-                dtype=torch.bfloat16, attn_implementation="flash_attention_2")
-        except Exception:
-            _design_model = Qwen3TTSModel.from_pretrained(
-                config.QWEN_DESIGN_MODEL_ID, device_map="cuda:0",
-                dtype=torch.bfloat16)
+                config.QWEN_DESIGN_MODEL_ID, **kwargs)
     torch.manual_seed(seed)
     wavs, sr = _design_model.generate_voice_design(
         text=[CALIBRATION_TEXT], language=["English"], instruct=[instruct])

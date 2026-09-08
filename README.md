@@ -4,7 +4,8 @@ Spec-driven audiobook studio. Consumes the annotated book JSON produced by
 [gutenberg-reader](https://github.com/anders94/gutenberg-reader) — including the `production` block and
 per-character `voice` specs (sex, age band, accent, register, pitch, timbre) —
 casts each character against a tagged library of accent reference clips, and
-renders the book with a local voice-cloning TTS engine on CUDA.
+renders the book with a local voice-cloning TTS engine on the local GPU
+(CUDA on Linux, Apple MPS on macOS).
 
 Design principle: **design once, clone forever.** Every character gets one
 frozen reference clip (picked from the accent library, optionally shaped by a
@@ -16,6 +17,12 @@ reference, which is what keeps a 12-hour performance consistent.
 ```bash
 uv sync --extra qwen          # main venv: Qwen3-TTS engine + whisper QC
 ```
+
+Device selection is automatic (`device.py`): CUDA if present, else Apple MPS,
+else CPU. On Linux the lockfile pins a CUDA 12.8 torch build; on macOS torch
+comes from PyPI with MPS support. Expect an M1 Pro to render at roughly 1.5-2x
+realtime versus well under 1x on a 24 GB NVIDIA card; Whisper QC runs on CPU
+(int8) on Macs since ctranslate2 has no MPS backend.
 
 The optional Chatterbox engine cannot share this venv (it pins conflicting
 torch/transformers versions). Give it its own venv and point the app at it:
@@ -29,12 +36,13 @@ VIRTUAL_ENV=~/.venvs/chatterbox uv pip install chatterbox-tts "setuptools<81"
 export CHATTERBOX_PYTHON=~/.venvs/chatterbox/bin/python
 ```
 
-`ffmpeg` is required on PATH; `ffplay` is used for auditioning.
+`ffmpeg` is required on PATH (`brew install ffmpeg` / `sudo apt install
+ffmpeg`); `ffplay` is used for auditioning.
 
 Harmless startup warnings: qwen-tts complains that `flash-attn` is not
 installed (optional CUDA kernels; PyTorch SDPA attention is used instead) and
 that `sox` is missing (probed by an audio dependency, unused in our path —
-`sudo apt install sox` silences it).
+`sudo apt install sox` / `brew install sox` silences it).
 
 Reference clips are cloned whole. Do not truncate them: a reference that
 stops mid-passage makes Qwen "continue" the cut-off speech before the target

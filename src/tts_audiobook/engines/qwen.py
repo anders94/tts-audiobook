@@ -5,6 +5,7 @@ from typing import Any
 
 import numpy as np
 
+from .. import device
 from ..config import QWEN_MODEL_ID
 
 
@@ -31,27 +32,25 @@ class QwenEngine:
     def load(self) -> None:
         if self._model is not None:
             return
-        import torch
         from qwen_tts import Qwen3TTSModel
         from rich import print as rprint
 
-        if torch.cuda.is_available():
-            rprint("[dim]Loading Qwen3-TTS on cuda:0 (bfloat16)…[/dim]")
+        kwargs = device.load_kwargs()
+        dev = kwargs["device_map"]
+        if dev == "cpu":
+            rprint("[yellow]No CUDA or MPS device; loading Qwen3-TTS on CPU "
+                   "(this will be very slow).[/yellow]")
+        else:
+            rprint(f"[dim]Loading Qwen3-TTS on {dev} ({kwargs['dtype']})…[/dim]")
+        if device.is_cuda():
+            # flash-attn is a CUDA-only kernel; elsewhere SDPA is the fast path.
             try:
                 self._model = Qwen3TTSModel.from_pretrained(
-                    QWEN_MODEL_ID,
-                    device_map="cuda:0",
-                    dtype=torch.bfloat16,
-                    attn_implementation="flash_attention_2",
-                )
+                    QWEN_MODEL_ID, attn_implementation="flash_attention_2", **kwargs)
             except Exception:
                 rprint("[yellow]flash_attention_2 unavailable; loading without it.[/yellow]")
-                self._model = Qwen3TTSModel.from_pretrained(
-                    QWEN_MODEL_ID, device_map="cuda:0", dtype=torch.bfloat16)
-        else:
-            rprint("[yellow]CUDA unavailable; loading Qwen3-TTS on CPU "
-                   "(this will be very slow).[/yellow]")
-            self._model = Qwen3TTSModel.from_pretrained(QWEN_MODEL_ID, device_map="cpu")
+        if self._model is None:
+            self._model = Qwen3TTSModel.from_pretrained(QWEN_MODEL_ID, **kwargs)
 
         # Silence transformers' per-call "Setting `pad_token_id` to `eos_token_id`"
         # warning: the talker's generation config has no pad_token_id, so generate()

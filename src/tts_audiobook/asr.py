@@ -4,6 +4,7 @@ from pathlib import Path
 
 import numpy as np
 
+from . import device
 from .config import WHISPER_MODEL_ID
 
 _whisper_model = None
@@ -29,9 +30,11 @@ def _whisper(force_cpu: bool = False):
     if _whisper_model is None:
         from faster_whisper import WhisperModel
         # Try CUDA float16 first; fall back to CPU int8 if CUDA isn't usable
-        # for ctranslate2. CUDA failures can also surface lazily at the first
-        # transcribe call — _run() handles that by rebuilding on CPU.
-        if not force_cpu:
+        # for ctranslate2 (which has no MPS backend, so Macs go straight to
+        # CPU int8 — fast enough for base.en). CUDA failures can also surface
+        # lazily at the first transcribe call — _run() handles that by
+        # rebuilding on CPU.
+        if not force_cpu and device.cuda_possible():
             try:
                 _preload_cuda_libs()
                 _whisper_model = WhisperModel(WHISPER_MODEL_ID, device="cuda",

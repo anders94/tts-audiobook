@@ -78,6 +78,10 @@ uv run tts-audiobook cast 1342-pride-and-prejudice.json
 # 4. Audition: listen to one line per voice; accept / reroll / override
 uv run tts-audiobook audition 1342-pride-and-prejudice.json
 
+# 4b. See who got which voice; pin one speaker to a specific library clip
+uv run tts-audiobook cast-list 1342-pride-and-prejudice.json
+uv run tts-audiobook assign 1342-pride-and-prejudice.json --character "Mr. Darcy" --clip 42
+
 # 5. (optional) Compare engines on one chapter
 uv run tts-audiobook bakeoff 1342-pride-and-prejudice.json --chapter 3
 

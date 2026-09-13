@@ -171,6 +171,47 @@ def run_casting(conn: sqlite3.Connection, book: Book, book_id: int,
     rprint(table)
 
 
+def cast_summary(conn, book: Book, book_id: int) -> list[dict]:
+    """One row per speaker (by importance) describing the voice cast for it.
+
+    Speakers with no cast row still appear (voice "—") so gaps are visible;
+    stale cast rows for names no longer in the book (e.g. merged away) are
+    listed last and flagged.
+    """
+    counts = dict(speakers_by_importance(book))
+    rows = {r["character"]: r for r in dbmod.cast_all(conn, book_id)}
+    out: list[dict] = []
+
+    def describe(row) -> dict:
+        clip_id = row["library_clip_id"] if row else None
+        clip = dbmod.clip_get(conn, int(clip_id)) if clip_id is not None else None
+        if row is None or not row["ref_path"]:
+            voice = "—"
+        elif clip_id is not None:
+            voice = f"clip #{clip_id}"
+        else:
+            voice = f"designed (seed {row['design_seed']})"
+        if clip:
+            detail = " ".join(x for x in (clip["sex"], clip["age_band"], clip["locale"],
+                                          clip["region"]) if x)
+            if clip["notes"]:
+                detail = f"{detail} · {clip['notes']}" if detail else clip["notes"]
+        elif row is not None and row["library_clip_id"] is not None:
+            detail = "(clip deleted)"
+        else:
+            detail = ""
+        return {"voice": voice, "clip_id": clip_id, "detail": detail,
+                "status": row["status"] if row else "uncast",
+                "engine": (row["engine"] if row else None) or ""}
+
+    for key, n in counts.items():
+        out.append({"character": key, "segments": n, "stale": False,
+                    **describe(rows.pop(key, None))})
+    for key, row in rows.items():
+        out.append({"character": key, "segments": 0, "stale": True, **describe(row)})
+    return out
+
+
 def signature_line(book: Book, speaker_key: str) -> str:
     line = sample_line_for(book, speaker_key, min_len=40, max_len=200)
     return line or "The evening settled softly over the quiet town."

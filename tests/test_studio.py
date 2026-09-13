@@ -64,3 +64,39 @@ def test_default_narrator_without_production(tmp_path):
     p.write_text('{"metadata": {"title": "X"}, "chapters": []}', encoding="utf-8")
     book = load_book(p)
     assert spec_for_speaker(book, NARRATOR_KEY) == DEFAULT_NARRATOR_SPEC
+
+
+def test_cast_summary(tmp_path):
+    from tts_audiobook import db as dbmod
+    from tts_audiobook.studio import cast_summary
+    book = load_book(write_enriched(tmp_path))
+    conn = dbmod.connect(tmp_path / "studio.db")
+    book_id = dbmod.book_upsert(conn, book.source_path, title=book.title,
+                                author=book.author, gutenberg_id=None,
+                                output_dir=tmp_path / "out")
+    clip_id = dbmod.clip_add(conn, path=tmp_path / "c.wav", transcript="hi",
+                             duration_s=5.0, sex="female", age_band="adult",
+                             locale="en-GB", region="Hertfordshire", quality="good",
+                             source="custom", license=None, notes="warm", sha256="x")
+    dbmod.cast_upsert(conn, book_id, NARRATOR_KEY, library_clip_id=clip_id,
+                      ref_path="/ref/n.wav", status="accepted", engine="qwen")
+    dbmod.cast_upsert(conn, book_id, "Elizabeth Bennet", library_clip_id=None,
+                      ref_path="/ref/e.wav", design_seed=7, status="proposed")
+    dbmod.cast_upsert(conn, book_id, "Ghost", library_clip_id=None,
+                      ref_path="/ref/g.wav", design_seed=1, status="accepted")
+
+    rows = {r["character"]: r for r in cast_summary(conn, book, book_id)}
+    assert rows[NARRATOR_KEY]["voice"] == f"clip #{clip_id}"
+    assert rows[NARRATOR_KEY]["detail"] == "female adult en-GB Hertfordshire · warm"
+    assert rows[NARRATOR_KEY]["status"] == "accepted"
+    assert rows["Elizabeth Bennet"]["voice"] == "designed (seed 7)"
+    assert rows["Elizabeth Bennet"]["status"] == "proposed"
+    assert rows["Ghost"]["stale"] is True
+    order = [r["character"] for r in cast_summary(conn, book, book_id)]
+    assert order[-1] == "Ghost"
+
+    dbmod.cast_delete(conn, book_id, "Elizabeth Bennet")
+    rows = {r["character"]: r for r in cast_summary(conn, book, book_id)}
+    assert rows["Elizabeth Bennet"]["status"] == "uncast"
+    assert rows["Elizabeth Bennet"]["voice"] == "—"
+

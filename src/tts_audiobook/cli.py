@@ -320,6 +320,45 @@ def cast_cmd(book_path: Path, recast: bool, design: bool) -> None:
             raise click.ClickException(str(e)) from e
 
 
+@main.command("cast-list")
+@click.argument("book_path", type=click.Path(exists=True, dir_okay=False, path_type=Path))
+def cast_list_cmd(book_path: Path) -> None:
+    """Show which voice is cast for every speaker, and its status."""
+    from .studio import cast_summary
+    book = _open_book(book_path)
+    out_dir = _resolve_output_dir(book, None)
+    with dbmod.db() as conn:
+        book_id = _ensure_book_row(conn, book, out_dir)
+        rows = cast_summary(conn, book, book_id)
+
+    if not any(r["status"] != "uncast" for r in rows):
+        rprint(f"[yellow]No voices cast yet for {book.title}.[/yellow] "
+               "Try: tts-audiobook cast BOOK")
+        return
+
+    colors = {"accepted": "green", "auditioned": "cyan", "proposed": "yellow",
+              "uncast": "red"}
+    table = Table(title=f"Cast — {book.title}")
+    table.add_column("Speaker", min_width=14)
+    table.add_column("Segments", justify="right")
+    table.add_column("Voice", no_wrap=True)
+    table.add_column("Clip", overflow="ellipsis", max_width=44)
+    table.add_column("Status", no_wrap=True)
+    table.add_column("Engine", no_wrap=True)
+    for r in rows:
+        name = "(narrator)" if r["character"] == NARRATOR_KEY else r["character"]
+        if r["stale"]:
+            name = f"[dim]{name} (not in book)[/dim]"
+        status = f"[{colors.get(r['status'], 'white')}]{r['status']}[/]"
+        table.add_row(name, str(r["segments"]) if not r["stale"] else "—",
+                      r["voice"], r["detail"], status, r["engine"] or "—")
+    rprint(table)
+    n_acc = sum(1 for r in rows if not r["stale"] and r["status"] == "accepted")
+    n_all = sum(1 for r in rows if not r["stale"])
+    rprint(f"Accepted: {n_acc}/{n_all} speakers.  "
+           "[dim]Change one: tts-audiobook assign BOOK --character NAME --clip ID[/dim]")
+
+
 @main.command("merge")
 @click.argument("book_path", type=click.Path(exists=True, dir_okay=False, path_type=Path))
 @click.option("--from", "from_name", default=None,

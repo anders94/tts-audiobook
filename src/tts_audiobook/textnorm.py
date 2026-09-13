@@ -54,6 +54,37 @@ def normalize_heading(text: str, *, chapter_number: int | None = None,
     return text
 
 
+_TERMINAL_PUNCT = (".", "!", "?", ":")
+_HEADING_KEY_RE = re.compile(r"[\s/]+")
+
+
+def heading_matches(text: str, title: str) -> bool:
+    """True if a segment is the chapter heading. Upstream titles keep source
+    line breaks as " / " and stray double spaces ("Chapter I / The Bertolini",
+    "A.  SALVIUS OTHO.") that the text segment doesn't, so compare loosely."""
+    def key(s: str) -> str:
+        return _HEADING_KEY_RE.sub(" ", s).strip().rstrip(".:;,").casefold()
+    return bool(title.strip()) and key(text) == key(title)
+
+
+def spoken_heading(title: str, chapter_number: int) -> str:
+    """Heading to narrate when a chapter's text doesn't open with one.
+
+    "Chapter I" → "Chapter 1."; a title with no chapter label, e.g.
+    "Loomings", becomes "Chapter 1. Loomings." so the listener always hears
+    the chapter number that separates it from what came before.
+    """
+    heading = normalize_heading(title, chapter_number=chapter_number,
+                                is_title=True).strip()
+    if not _LABELED_HEADING_RE.match(heading) and \
+            not re.match(r"^(?:chapter|part|book|volume|section|act|scene|stave|canto)\b",
+                         heading, re.IGNORECASE):
+        heading = f"Chapter {chapter_number}. {heading}" if heading else f"Chapter {chapter_number}"
+    if not heading.endswith(_TERMINAL_PUNCT):
+        heading += "."
+    return heading
+
+
 # Pronunciation hints arrive as free-ish text from the upstream LLM. Accepted
 # shapes, most specific first: "word (pron: say-it)", "word → say-it",
 # "word -> say-it", "word: say-it", "word = say-it". Anything else is ignored

@@ -35,3 +35,24 @@ def test_unparseable_hint_never_spoken():
     text = "Hello there."
     out = apply_pronunciation(text, ["emphasise the greeting"])
     assert out == text
+
+
+def test_spoken_heading():
+    from tts_audiobook.textnorm import spoken_heading
+    assert spoken_heading("Chapter I", 1) == "Chapter 1."
+    assert spoken_heading("CHAPTER II.", 2) == "CHAPTER 2."
+    assert spoken_heading("Chapter 3", 3) == "Chapter 3."
+    assert spoken_heading("Loomings", 1) == "Chapter 1. Loomings."
+    assert spoken_heading("Part II: The Return", 5) == "Part 2: The Return."
+    assert spoken_heading("", 4) == "Chapter 4."
+
+
+def test_heading_matches_loosely():
+    from tts_audiobook.textnorm import heading_matches
+    assert heading_matches("Chapter I", "Chapter I")
+    assert heading_matches("Chapter I The Bertolini", "Chapter I / The Bertolini")
+    assert heading_matches("A. SALVIUS OTHO.", "A.  SALVIUS OTHO.")
+    assert heading_matches("CHAPTER II.", "Chapter II")
+    assert not heading_matches("It is a truth universally acknowledged.", "Chapter I")
+    assert not heading_matches("", "")
+

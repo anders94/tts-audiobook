@@ -9,7 +9,7 @@ from pathlib import Path
 from .aliases import build_alias_map, canonicalize
 from .config import NARRATOR_KEY
 from .specs import CharacterSpec, Production, parse_characters, parse_production
-from .textnorm import normalize_heading
+from .textnorm import heading_matches, normalize_heading, spoken_heading
 
 
 @dataclass
@@ -69,12 +69,14 @@ def load_book(path: Path) -> Book:
         number = int(proc.get("chapter_number") or ch_meta.get("number") or len(chapters) + 1)
         title = (proc.get("chapter_title") or ch_meta.get("title") or f"Chapter {number}").strip()
         segs: list[Segment] = []
+        has_heading = False
         for s in proc.get("segments", []) or []:
             text = (s.get("text") or "").strip()
             if not text:
                 continue
-            text = normalize_heading(text, chapter_number=number,
-                                     is_title=(text == title))
+            is_title = heading_matches(text, title)
+            has_heading = has_heading or is_title
+            text = normalize_heading(text, chapter_number=number, is_title=is_title)
             raw_speaker = s.get("speaker")
             seg_type = s.get("type") or "narration"
             notes = s.get("notes")
@@ -96,6 +98,14 @@ def load_book(path: Path) -> Book:
                 start=s.get("start"),
                 end=s.get("end"),
             ))
+        if segs and not has_heading:
+            # Some sources drop the heading from the first chapter's text
+            # (Pride and Prejudice opens straight into "It is a truth...").
+            # Narrate it anyway so the chapter is audibly separated from the
+            # title track / previous chapter.
+            segs.insert(0, Segment(speaker_key=NARRATOR_KEY,
+                                   text=spoken_heading(title, number),
+                                   raw_speaker=None))
         chapters.append(Chapter(number=number, title=title, segments=segs))
 
     return Book(

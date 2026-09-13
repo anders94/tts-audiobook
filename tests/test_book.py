@@ -77,3 +77,24 @@ def test_title_chapter_mentions_gutenberg_aloud(tmp_path):
     assert texts[-1] == ATTRIBUTION_TEXT
     assert "Gutenberg Aloud" in ATTRIBUTION_TEXT
     assert all(s.speaker_key == NARRATOR_KEY for s in ch.segments)
+
+
+def test_missing_heading_is_narrated(tmp_path):
+    import copy
+    import json
+    from fixtures import ENRICHED_BOOK
+    data = copy.deepcopy(ENRICHED_BOOK)
+    data["chapters"][0]["processed"]["segments"].pop(0)   # drop "Chapter I"
+    p = tmp_path / "noheading.json"
+    p.write_text(json.dumps(data), encoding="utf-8")
+    ch = load_book(p).chapters[0]
+    assert ch.segments[0].text == "Chapter 1."
+    assert ch.segments[0].speaker_key == NARRATOR_KEY
+    assert ch.segments[1].text == "It is a truth universally acknowledged."
+
+
+def test_existing_heading_not_duplicated(tmp_path):
+    ch = load_book(write_enriched(tmp_path)).chapters[0]
+    assert [s.text for s in ch.segments[:2]] == \
+        ["Chapter 1", "It is a truth universally acknowledged."]
+

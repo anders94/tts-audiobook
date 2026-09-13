@@ -65,3 +65,15 @@ def test_missing_blocks_tolerated(tmp_path):
     assert book.title == "X"
     assert book.production is None
     assert book.characters == []
+
+
+def test_title_chapter_mentions_gutenberg_aloud(tmp_path):
+    from tts_audiobook.render import ATTRIBUTION_TEXT, title_chapter
+    book = load_book(write_enriched(tmp_path))
+    ch = title_chapter(book)
+    texts = [s.text for s in ch.segments]
+    assert texts[0] == "Pride and Prejudice, by Jane Austen."
+    assert texts[1] == "Elizabeth Bennet meets the proud Mr Darcy."
+    assert texts[-1] == ATTRIBUTION_TEXT
+    assert "Gutenberg Aloud" in ATTRIBUTION_TEXT
+    assert all(s.speaker_key == NARRATOR_KEY for s in ch.segments)

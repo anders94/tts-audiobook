@@ -49,6 +49,7 @@ GAP_SAME_SPEAKER = 0.45      # same voice, new segment (usually a new sentence)
 GAP_SUBSPLIT = 0.30          # sentence boundary within one long split segment
 GAP_SCENE_BREAK = 0.70       # visible gap in source offsets (blank line / scene break)
 GAP_AFTER_TITLE = 0.90
+TITLE_TAIL_SILENCE_S = 2.5    # trailing silence on the title track before chapter 1
 SCENE_BREAK_OFFSET_GAP = 8   # source chars between segments that imply a scene break
 
 # --- audio post ---

@@ -175,10 +175,21 @@ def render_chapter(conn: sqlite3.Connection, engine: Engine, book: Book,
         if item.gap_before_s > 0 and pieces:
             pieces.append(audiomod.silence(sample_rate, item.gap_before_s))
         pieces.append(rendered[item.index])
+    if chapter.number == 0:
+        # Leave a clear beat between the title/attribution and chapter one.
+        pieces.append(audiomod.silence(sample_rate, config.TITLE_TAIL_SILENCE_S))
     full = audiomod.concat(pieces)
     audiomod.encode_mp3(full, sample_rate, output_path)
 
     device.empty_cache()
+
+
+# Spoken before chapter one so listeners can find the project. The URL is
+# spelled out for the TTS engine; the sentence is kept long enough that
+# Whisper collapsing it to "gutenbergaloud.org" stays under QC_WER_THRESHOLD.
+ATTRIBUTION_TEXT = ("This recording is made available by Gutenberg Aloud, a project "
+                    "that turns public domain books into free audio recordings. "
+                    "You can find this book and many more at gutenberg aloud dot org.")
 
 
 def title_chapter(book: Book) -> Chapter:
@@ -187,6 +198,8 @@ def title_chapter(book: Book) -> Chapter:
     if book.production and book.production.synopsis:
         segments.append(Segment(speaker_key=NARRATOR_KEY,
                                 text=book.production.synopsis, raw_speaker=None))
+    segments.append(Segment(speaker_key=NARRATOR_KEY, text=ATTRIBUTION_TEXT,
+                            raw_speaker=None))
     return Chapter(number=0, title="title", segments=segments)
 
 

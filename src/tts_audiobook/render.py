@@ -90,20 +90,32 @@ class _Rendered:
 
 
 def _render_one(engine: Engine, prompt, item: RenderItem, *, language: str,
-                seed: int, allowlist: set[str], run_qc: bool) -> _Rendered:
+                seed: int, allowlist: set[str], run_qc: bool,
+                ref_f0: float | None = None) -> _Rendered:
     best: _Rendered | None = None
     for attempt in range(config.QC_MAX_ATTEMPTS):
         wavs, sr = engine.generate([item.text], prompt, language=language,
                                    seed=seed + attempt)
         wav = audiomod.trim_silence(wavs[0], sr)
         transcript = _transcribe_or_none(wav, sr) if run_qc else None
-        result = qcmod.check(item.text, wav, sr, transcript, allowlist)
+        result = qcmod.check(item.text, wav, sr, transcript, allowlist,
+                             ref_f0=ref_f0)
         cand = _Rendered(wav=wav, qc=result, attempts=attempt + 1)
-        if best is None or cand.qc.wer < best.qc.wer:
+        if best is None or qcmod.better(cand.qc, best.qc):
             best = cand
         if result.passed:
             return best
     return best  # type: ignore[return-value]
+
+
+def reference_f0(cv: CastVoice) -> float | None:
+    """Median pitch of a cast voice's frozen reference clip (None if unreadable)."""
+    try:
+        import soundfile as sf
+        wav, sr = sf.read(str(cv.ref_path), dtype="float32", always_2d=True)
+        return qcmod.median_f0(wav.mean(axis=1), sr)
+    except Exception:
+        return None
 
 
 def make_batches(bucket: list[RenderItem], engine_max: int) -> list[list[RenderItem]]:
@@ -142,6 +154,9 @@ def render_chapter(conn: sqlite3.Connection, engine: Engine, book: Book,
     for speaker_key, bucket in bucket_by_speaker(items).items():
         cv = cast[speaker_key]
         prompt = engine.clone_prompt(cv.ref_path, cv.ref_transcript)
+        # The clone drifts in register on short lines (a male voice can come
+        # out in a female range); judge every take against the reference pitch.
+        ref_f0 = reference_f0(cv) if run_qc else None
         for batch in make_batches(bucket, engine.max_batch):
             wavs, sr = engine.generate([b.text for b in batch], prompt,
                                        language=book.language, seed=cv.seed)
@@ -149,25 +164,27 @@ def render_chapter(conn: sqlite3.Connection, engine: Engine, book: Book,
             for item, wav in zip(batch, wavs):
                 wav = audiomod.trim_silence(wav, sr)
                 transcript = _transcribe_or_none(wav, sr) if run_qc else None
-                result = qcmod.check(item.text, wav, sr, transcript, allowlist)
+                result = qcmod.check(item.text, wav, sr, transcript, allowlist,
+                                     ref_f0=ref_f0)
                 if result.passed:
                     rendered[item.index] = audiomod.normalize_loudness(wav, sr)
                     continue
-                # Retry this item alone with varied seeds.
+                # Retry this item alone with varied seeds; keep the best take.
                 best = _render_one(engine, prompt, item, language=book.language,
                                    seed=cv.seed + 1000, allowlist=allowlist,
-                                   run_qc=run_qc)
-                if best.qc.wer < result.wer:
+                                   run_qc=run_qc, ref_f0=ref_f0)
+                if qcmod.better(best.qc, result):
                     keep, keep_qc, attempts = best.wav, best.qc, 1 + best.attempts
                 else:
                     keep, keep_qc, attempts = wav, result, 1 + best.attempts
                 rendered[item.index] = audiomod.normalize_loudness(keep, sr)
                 if not keep_qc.passed:
                     dbmod.qc_flag_add(conn, book_id, chapter.number, item.index,
-                                      speaker_key, item.text, keep_qc.wer, attempts)
+                                      speaker_key, item.text, keep_qc.wer, attempts,
+                                      reason=keep_qc.reason)
                     rprint(f"[yellow]QC flag[/yellow] ch{chapter.number} "
-                           f"item {item.index} ({speaker_key}): "
-                           f"wer={keep_qc.wer:.2f} after {attempts} attempts")
+                           f"item {item.index} ({speaker_key}): {keep_qc.reason} "
+                           f"{keep_qc.describe()} after {attempts} attempts")
 
     assert sample_rate is not None
     pieces: list[np.ndarray] = []

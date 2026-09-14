@@ -601,11 +601,12 @@ def qc_report_cmd(book_path: Path) -> None:
         rprint("[green]No QC flags.[/green]")
         return
     table = Table(title="QC flags")
-    for col in ("Ch", "Item", "Speaker", "WER", "Tries", "Text"):
+    for col in ("Ch", "Item", "Speaker", "Reason", "WER", "Tries", "Text"):
         table.add_column(col)
     for f in flags:
         table.add_row(str(f["chapter_number"]), str(f["item_index"]),
-                      f["character"] or "-", f"{f['best_wer']:.2f}",
+                      f["character"] or "-", f["reason"] or "wer",
+                      f"{f['best_wer']:.2f}",
                       str(f["attempts"]), (f["text"] or "")[:60])
     rprint(table)
     rprint("[dim]Re-render a chapter: clear it with --chapters N after fixing.[/dim]")

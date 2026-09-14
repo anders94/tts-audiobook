@@ -100,20 +100,71 @@ def wer_threshold(ref_text: str) -> float:
     return max(config.QC_WER_THRESHOLD, 2.0 / n)
 
 
+def median_f0(wav: np.ndarray, sample_rate: int) -> float | None:
+    """Median pitch (Hz) over voiced frames via Praat, or None if the take has
+    less than QC_PITCH_MIN_VOICED_S of voiced audio to judge from."""
+    import parselmouth
+
+    if len(wav) < sample_rate * 0.1:
+        return None
+    snd = parselmouth.Sound(wav.astype(np.float64), sampling_frequency=sample_rate)
+    pitch = snd.to_pitch(pitch_floor=60.0, pitch_ceiling=500.0)
+    f0 = pitch.selected_array["frequency"]
+    voiced = f0[f0 > 0]
+    if len(voiced) * pitch.time_step < config.QC_PITCH_MIN_VOICED_S:
+        return None
+    return float(np.median(voiced))
+
+
+def semitones(f0: float, ref_f0: float) -> float:
+    """Signed pitch distance of f0 from ref_f0 in semitones."""
+    return 12.0 * float(np.log2(f0 / ref_f0))
+
+
 @dataclass
 class QCResult:
     passed: bool
     wer: float
-    reason: str  # "ok" | "duration" | "wer"
+    reason: str  # "ok" | "duration" | "wer" | "pitch"
+    pitch_dev: float | None = None  # semitones vs the reference voice, if measured
+
+    def describe(self) -> str:
+        s = f"wer={self.wer:.2f}"
+        if self.pitch_dev is not None:
+            s += f" pitch={self.pitch_dev:+.1f}st"
+        return s
+
+
+def better(a: QCResult, b: QCResult) -> bool:
+    """Is take `a` preferable to take `b`? Passing beats failing; then fewer
+    word errors; then the take closer to the reference pitch."""
+    if a.passed != b.passed:
+        return a.passed
+    if abs(a.wer - b.wer) > 1e-9:
+        return a.wer < b.wer
+    da = abs(a.pitch_dev) if a.pitch_dev is not None else 0.0
+    db = abs(b.pitch_dev) if b.pitch_dev is not None else 0.0
+    return da < db
 
 
 def check(text: str, wav: np.ndarray, sample_rate: int,
-          transcript: str | None, allowlist: set[str] | None = None) -> QCResult:
+          transcript: str | None, allowlist: set[str] | None = None,
+          ref_f0: float | None = None) -> QCResult:
+    """Judge one rendered take. `transcript` is the Whisper read-back (None
+    skips the word check); `ref_f0` is the reference voice's median pitch
+    (None skips the pitch check)."""
     if not duration_plausible(text, wav, sample_rate):
         return QCResult(passed=False, wer=1.0, reason="duration")
-    if transcript is None:
-        return QCResult(passed=True, wer=0.0, reason="ok")
-    w = wer_against(text, transcript, allowlist)
-    if w > wer_threshold(text):
-        return QCResult(passed=False, wer=w, reason="wer")
-    return QCResult(passed=True, wer=w, reason="ok")
+    w = 0.0
+    if transcript is not None:
+        w = wer_against(text, transcript, allowlist)
+    dev = None
+    if ref_f0:
+        f0 = median_f0(wav, sample_rate)
+        if f0:
+            dev = semitones(f0, ref_f0)
+    if transcript is not None and w > wer_threshold(text):
+        return QCResult(passed=False, wer=w, reason="wer", pitch_dev=dev)
+    if dev is not None and abs(dev) > config.QC_PITCH_MAX_SEMITONES:
+        return QCResult(passed=False, wer=w, reason="pitch", pitch_dev=dev)
+    return QCResult(passed=True, wer=w, reason="ok", pitch_dev=dev)

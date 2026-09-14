@@ -79,6 +79,7 @@ CREATE TABLE IF NOT EXISTS qc_flags (
     text           TEXT,
     best_wer       REAL,
     attempts       INTEGER,
+    reason         TEXT,                   -- wer | pitch | duration
     created_at     TEXT NOT NULL
 );
 """
@@ -94,7 +95,16 @@ def connect(db_path: Path = DB_PATH) -> sqlite3.Connection:
     conn.row_factory = sqlite3.Row
     conn.execute("PRAGMA foreign_keys = ON")
     conn.executescript(SCHEMA)
+    _migrate(conn)
     return conn
+
+
+def _migrate(conn: sqlite3.Connection) -> None:
+    """Additive column migrations for databases created by older versions."""
+    cols = {r[1] for r in conn.execute("PRAGMA table_info(qc_flags)")}
+    if "reason" not in cols:
+        conn.execute("ALTER TABLE qc_flags ADD COLUMN reason TEXT")
+        conn.commit()
 
 
 @contextmanager
@@ -276,12 +286,13 @@ def chapter_status_clear(conn: sqlite3.Connection, book_id: int,
 
 def qc_flag_add(conn: sqlite3.Connection, book_id: int, chapter_number: int,
                 item_index: int, character: str | None, text: str,
-                best_wer: float, attempts: int) -> None:
+                best_wer: float, attempts: int, reason: str | None = None) -> None:
     conn.execute(
         "INSERT INTO qc_flags (book_id, chapter_number, item_index, character, "
-        "text, best_wer, attempts, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+        "text, best_wer, attempts, reason, created_at) "
+        "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
         (book_id, chapter_number, item_index, character, text, best_wer,
-         attempts, _now()),
+         attempts, reason, _now()),
     )
 
 

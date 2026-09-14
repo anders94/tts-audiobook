@@ -70,6 +70,11 @@ MIN_LOUDNORM_S = 0.4         # below this, RMS matching instead of LUFS
 # --- QC ---
 QC_MAX_ATTEMPTS = 3
 QC_WER_THRESHOLD = 0.15
+# Voice-clone drift: a take whose median pitch is this many semitones off the
+# reference clip's is retried with new seeds (short lines flip register, even
+# apparent sex; listening feedback 2026-09-14). 6 st ≈ a 1.4× pitch ratio.
+QC_PITCH_MAX_SEMITONES = 6.0
+QC_PITCH_MIN_VOICED_S = 0.25   # skip the pitch check on takes with less voiced audio
 # duration guard: fail generation if audio exceeds chars/CHARS_PER_S * factor + slack
 QC_CHARS_PER_S = 15.0
 QC_DURATION_FACTOR = 2.5

@@ -75,6 +75,12 @@ QC_WER_THRESHOLD = 0.15
 # apparent sex; listening feedback 2026-09-14). 6 st ≈ a 1.4× pitch ratio.
 QC_PITCH_MAX_SEMITONES = 6.0
 QC_PITCH_MIN_VOICED_S = 0.25   # skip the pitch check on takes with less voiced audio
+# Short lines drift most, and retrying with new seeds only lands within 4-6 st.
+# Instead render MULTITAKE_COUNT independent takes of any item up to
+# MULTITAKE_MAX_CHARS in the same batch and keep the one closest to the
+# reference pitch (measured 2026-09-14: 8 takes ≈ 1-3 s, best take within ~1 st).
+MULTITAKE_MAX_CHARS = 80
+MULTITAKE_COUNT = 8
 # duration guard: fail generation if audio exceeds chars/CHARS_PER_S * factor + slack
 QC_CHARS_PER_S = 15.0
 QC_DURATION_FACTOR = 2.5

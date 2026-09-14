@@ -18,7 +18,7 @@ from .config import NARRATOR_KEY
 from .engines.base import Engine
 from .feed import write_feed
 from .library import sha256_file
-from .planning import RenderItem, bucket_by_speaker, plan_chapter
+from .planning import RenderItem, bucket_by_speaker, plan_chapter, takes_for
 
 
 @dataclass
@@ -119,23 +119,84 @@ def reference_f0(cv: CastVoice) -> float | None:
 
 
 def make_batches(bucket: list[RenderItem], engine_max: int) -> list[list[RenderItem]]:
-    """Chunk a voice's items by count AND total characters — batch memory
+    """Chunk a voice's items by row count AND total characters — batch memory
     scales with the longest text times batch size, and a run of long items
-    (a letter read aloud) OOMs if batched by count alone."""
+    (a letter read aloud) OOMs if batched by count alone.
+
+    An item occupies `takes_for(item)` rows (short lines are rendered several
+    times and the best take kept); all of an item's takes ride in one batch."""
     max_count = max(1, min(config.BATCH_SIZE, engine_max))
     batches: list[list[RenderItem]] = []
     cur: list[RenderItem] = []
+    cur_rows = 0
     cur_chars = 0
     for item in bucket:
-        if cur and (len(cur) >= max_count
-                    or cur_chars + len(item.text) > config.BATCH_MAX_CHARS):
+        rows = takes_for(item)
+        chars = rows * len(item.text)
+        if cur and (cur_rows + rows > max_count
+                    or cur_chars + chars > config.BATCH_MAX_CHARS):
             batches.append(cur)
-            cur, cur_chars = [], 0
+            cur, cur_rows, cur_chars = [], 0, 0
         cur.append(item)
-        cur_chars += len(item.text)
+        cur_rows += rows
+        cur_chars += chars
     if cur:
         batches.append(cur)
     return batches
+
+
+def batch_texts(batch: list[RenderItem]) -> list[str]:
+    """Engine input rows for a batch: each item's text repeated takes_for(item) times."""
+    return [item.text for item in batch for _ in range(takes_for(item))]
+
+
+def regroup_takes(batch: list[RenderItem], wavs: list[np.ndarray]
+                  ) -> list[tuple[RenderItem, list[np.ndarray]]]:
+    """Inverse of batch_texts: pair each item with its takes, in order."""
+    out: list[tuple[RenderItem, list[np.ndarray]]] = []
+    pos = 0
+    for item in batch:
+        n = takes_for(item)
+        out.append((item, wavs[pos:pos + n]))
+        pos += n
+    if pos != len(wavs):
+        raise RuntimeError(f"Engine returned {len(wavs)} clips for {pos} rows.")
+    return out
+
+
+def _pick_take(takes: list[np.ndarray], sr: int, item: RenderItem, *,
+               allowlist: set[str], ref_f0: float | None, run_qc: bool,
+               transcribe=None) -> tuple[np.ndarray, qcmod.QCResult, int]:
+    """Choose among independent takes of one item: the take closest to the
+    reference pitch that also passes QC; later takes win ties. Takes are
+    silence-trimmed here. Pitch is measured for every take (cheap); Whisper
+    runs only down the pitch-sorted list until a take passes, so a short line
+    usually costs one transcription, not one per take.
+
+    Returns (wav, qc_result, take_number) with take_number 1-based."""
+    transcribe = transcribe or _transcribe_or_none
+    trimmed = [audiomod.trim_silence(w, sr) for w in takes]
+    devs: list[float | None] = []
+    for w in trimmed:
+        f0 = qcmod.median_f0(w, sr) if ref_f0 else None
+        devs.append(qcmod.semitones(f0, ref_f0) if (f0 and ref_f0) else None)
+
+    def sort_key(i: int) -> tuple[int, float, int]:
+        d = devs[i]
+        return (0 if d is not None else 1, abs(d) if d is not None else 0.0, -i)
+
+    order = sorted(range(len(trimmed)), key=sort_key)
+    best: tuple[np.ndarray, qcmod.QCResult, int] | None = None
+    for i in order:
+        wav = trimmed[i]
+        transcript = transcribe(wav, sr) if run_qc else None
+        result = qcmod.check(item.text, wav, sr, transcript, allowlist, ref_f0=ref_f0)
+        if best is None or qcmod.better(result, best[1]):
+            best = (wav, result, i + 1)
+        if result.passed:
+            break
+    assert best is not None
+    return best
 
 
 def render_chapter(conn: sqlite3.Connection, engine: Engine, book: Book,
@@ -158,14 +219,21 @@ def render_chapter(conn: sqlite3.Connection, engine: Engine, book: Book,
         # out in a female range); judge every take against the reference pitch.
         ref_f0 = reference_f0(cv) if run_qc else None
         for batch in make_batches(bucket, engine.max_batch):
-            wavs, sr = engine.generate([b.text for b in batch], prompt,
+            wavs, sr = engine.generate(batch_texts(batch), prompt,
                                        language=book.language, seed=cv.seed)
             sample_rate = sr
-            for item, wav in zip(batch, wavs):
-                wav = audiomod.trim_silence(wav, sr)
-                transcript = _transcribe_or_none(wav, sr) if run_qc else None
-                result = qcmod.check(item.text, wav, sr, transcript, allowlist,
-                                     ref_f0=ref_f0)
+            for item, takes in regroup_takes(batch, wavs):
+                if len(takes) > 1:
+                    wav, result, kept = _pick_take(
+                        takes, sr, item, allowlist=allowlist, ref_f0=ref_f0,
+                        run_qc=run_qc)
+                    rprint(f"[dim]ch{chapter.number} item {item.index}: take "
+                           f"{kept}/{len(takes)} kept ({result.describe()})[/dim]")
+                else:
+                    wav = audiomod.trim_silence(takes[0], sr)
+                    transcript = _transcribe_or_none(wav, sr) if run_qc else None
+                    result = qcmod.check(item.text, wav, sr, transcript, allowlist,
+                                         ref_f0=ref_f0)
                 if result.passed:
                     rendered[item.index] = audiomod.normalize_loudness(wav, sr)
                     continue

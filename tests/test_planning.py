@@ -78,5 +78,39 @@ def test_make_batches_caps_count_and_chars():
                               gap_before_s=0.0) for i in range(60)]
     batches = make_batches(short_items, engine_max=24)
     assert all(len(b) <= 24 for b in batches)
+    assert sum(len(b) for b in batches) == 60
 
     assert make_batches([], engine_max=24) == []
+
+
+def test_takes_for_short_lines_only():
+    from tts_audiobook.planning import RenderItem, takes_for
+    short = RenderItem(index=0, speaker_key="A", text="x" * config.MULTITAKE_MAX_CHARS,
+                       gap_before_s=0.0)
+    long = RenderItem(index=1, speaker_key="A", text="x" * (config.MULTITAKE_MAX_CHARS + 1),
+                      gap_before_s=0.0)
+    assert takes_for(short) == config.MULTITAKE_COUNT
+    assert takes_for(long) == 1
+
+
+def test_make_batches_budgets_rows_by_takes_and_never_splits_an_item():
+    from tts_audiobook.planning import RenderItem, takes_for
+    from tts_audiobook.render import batch_texts, make_batches, regroup_takes
+
+    items = [RenderItem(index=i, speaker_key="A", text="short line",
+                        gap_before_s=0.0) for i in range(7)]
+    batches = make_batches(items, engine_max=24)
+    n = config.MULTITAKE_COUNT
+    for b in batches:
+        rows = sum(takes_for(i) for i in b)
+        assert rows <= 24
+        assert len(batch_texts(b)) == rows
+    assert [i.index for b in batches for i in b] == list(range(7))
+    assert len(batches) == -(-7 * n // 24)   # ceil(7n / 24)
+
+    # Round trip: engine rows come back grouped per item, in order.
+    b = batches[0]
+    fake = [object() for _ in batch_texts(b)]
+    grouped = regroup_takes(b, fake)   # type: ignore[arg-type]
+    assert [it.index for it, _ in grouped] == [i.index for i in b]
+    assert all(len(t) == takes_for(it) for it, t in grouped)

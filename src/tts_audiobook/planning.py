@@ -66,6 +66,14 @@ def plan_chapter(chapter: Chapter) -> list[RenderItem]:
     return items
 
 
+def takes_for(item: RenderItem) -> int:
+    """How many independent takes to render for an item: short lines drift in
+    register, so they get MULTITAKE_COUNT candidates and the closest is kept."""
+    if len(item.text) <= config.MULTITAKE_MAX_CHARS:
+        return max(1, config.MULTITAKE_COUNT)
+    return 1
+
+
 def bucket_by_speaker(items: list[RenderItem]) -> dict[str, list[RenderItem]]:
     buckets: dict[str, list[RenderItem]] = {}
     for item in items:

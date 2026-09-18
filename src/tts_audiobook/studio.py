@@ -12,7 +12,7 @@ from rich.table import Table
 
 from . import db as dbmod
 from .book import Book, book_output_subdir, character_spec_for, sample_line_for, speakers_by_importance
-from .casting import CastingChoice, cast_book
+from .casting import CastingChoice, cast_book, score_clip
 from .config import NARRATOR_KEY
 from .engines.base import Engine
 from .library import clip_info, play_sample
@@ -227,6 +227,84 @@ def _play_wav(wav, sr) -> None:
         tmp_path.unlink(missing_ok=True)
 
 
+def library_choices(conn: sqlite3.Connection, book: Book, book_id: int,
+                    key: str, spec: VoiceSpec | None) -> list[dict]:
+    """Every library clip, scored against `key`'s spec, best first, with the
+    speakers already using each clip so a reuse is a visible choice."""
+    in_use: dict[int, list[str]] = {}
+    for r in dbmod.cast_all(conn, book_id):
+        if r["library_clip_id"] is not None and r["character"] != key:
+            name = "(narrator)" if r["character"] == NARRATOR_KEY else r["character"]
+            in_use.setdefault(int(r["library_clip_id"]), []).append(name)
+    out = []
+    for r in dbmod.clip_list(conn):
+        info = clip_info(r)
+        score = score_clip(spec, info) if spec else 0.0
+        out.append({"row": r, "clip_id": info.clip_id, "score": score,
+                    "in_use": in_use.get(info.clip_id, [])})
+    out.sort(key=lambda c: (-c["score"], c["clip_id"]))
+    return out
+
+
+def _choose_library_clip(conn: sqlite3.Connection, book: Book, book_id: int,
+                         key: str, spec: VoiceSpec | None,
+                         current_clip: int | None) -> int | None:
+    """Interactive picker over the whole library: shows a scored table, lets
+    the user play clips by id, and returns the chosen clip id (None = cancel)."""
+    import click
+
+    choices = library_choices(conn, book, book_id, key, spec)
+    if not choices:
+        rprint("[yellow]Library is empty.[/yellow]")
+        return None
+    table = Table(title=f"Library voices for {key}")
+    for col, just in (("ID", "right"), ("Fit", "right"), ("Sex", "left"),
+                      ("Age", "left"), ("Locale", "left"), ("Region", "left"),
+                      ("Notes", "left"), ("Used by", "left")):
+        table.add_column(col, justify=just)
+    for c in choices:
+        r = c["row"]
+        fit = "✗" if c["score"] == float("-inf") else f"{c['score']:.0f}"
+        cid = f"[bold]{c['clip_id']} ◀[/bold]" if c["clip_id"] == current_clip else str(c["clip_id"])
+        table.add_row(cid, fit, r["sex"] or "-", r["age_band"] or "-",
+                      r["locale"] or "-", r["region"] or "-",
+                      (r["notes"] or "")[:40], ", ".join(c["in_use"]))
+    rprint(table)
+    rprint("[dim]Fit: casting score against this speaker's spec (✗ = sex mismatch). "
+           "◀ = current voice.[/dim]")
+    while True:
+        ans = click.prompt("  clip id to use / [p] ID to play a clip / [c]ancel",
+                           default="c", show_default=False).strip().lower()
+        if ans in ("c", ""):
+            return None
+        play = ans.startswith("p")
+        num = ans[1:].strip() if play else ans
+        if not num.isdigit() or dbmod.clip_get(conn, int(num)) is None:
+            rprint(f"[yellow]No clip #{num}[/yellow]")
+            continue
+        if play:
+            play_sample(Path(dbmod.clip_get(conn, int(num))["path"]))
+            continue
+        return int(num)
+
+
+def recast_to_clip(conn: sqlite3.Connection, book: Book, book_id: int,
+                   key: str, clip_id: int, spec: VoiceSpec | None) -> None:
+    """Freeze `key` to library clip `clip_id` (status back to proposed so the
+    audition loop plays it before it is accepted)."""
+    row = dbmod.clip_get(conn, clip_id)
+    ref = build_reference(book_key=book_output_subdir(book), character=key,
+                          clip_path=Path(row["path"]), clip_transcript=row["transcript"])
+    dbmod.cast_upsert(
+        conn, book_id, key,
+        spec_json=json.dumps(asdict(spec)) if spec else None,
+        library_clip_id=clip_id,
+        ref_path=str(ref.path), ref_transcript=ref.transcript,
+        ref_sha256=ref.sha256, design_seed=None, audition_seed=0,
+        status="proposed",
+    )
+
+
 def run_audition(conn: sqlite3.Connection, engine: Engine, book: Book,
                  book_id: int, *, only_character: str | None = None,
                  auto_accept: bool = False) -> None:
@@ -259,9 +337,11 @@ def run_audition(conn: sqlite3.Connection, engine: Engine, book: Book,
             wavs, sr = engine.generate([line], prompt,
                                        language=book.language, seed=seed)
             _play_wav(wavs[0], sr)
+            voice = (f"clip #{row['library_clip_id']}" if row["library_clip_id"] is not None
+                     else f"designed (seed {row['design_seed']})")
             choice = click.prompt(
-                "  [a]ccept / [r]eroll take / [d]esign new voice / "
-                "[p]lay again / [s]kip",
+                f"  [{voice}] [a]ccept / [r]eroll take / [l]ibrary: pick another voice / "
+                "[d]esign new voice / [p]lay again / [s]kip",
                 default="a", show_default=False).strip().lower()
             if choice == "a":
                 dbmod.cast_upsert(conn, book_id, key, status="accepted",
@@ -269,6 +349,22 @@ def run_audition(conn: sqlite3.Connection, engine: Engine, book: Book,
                 break
             if choice == "r":
                 seed += 1
+                continue
+            if choice == "l":
+                # Re-pin to any clip in the library (e.g. a pivotal voice like
+                # the narrator deserves a hand-picked choice, not the scorer's).
+                spec_json = row["spec_json"]
+                spec = (parse_voice(json.loads(spec_json)) if spec_json
+                        else spec_for_speaker(book, key)) or spec_for_speaker(book, key)
+                clip_id = _choose_library_clip(
+                    conn, book, book_id, key, spec,
+                    current_clip=row["library_clip_id"])
+                if clip_id is None or clip_id == row["library_clip_id"]:
+                    continue
+                recast_to_clip(conn, book, book_id, key, clip_id, spec)
+                row = dbmod.cast_get(conn, book_id, key)
+                seed = 0
+                rprint(f"[green]{name}[/green] → clip #{clip_id}; listening…")
                 continue
             if choice == "d":
                 # New synthetic identity from the spec (not just a new take).

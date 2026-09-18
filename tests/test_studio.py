@@ -100,3 +100,50 @@ def test_cast_summary(tmp_path):
     assert rows["Elizabeth Bennet"]["status"] == "uncast"
     assert rows["Elizabeth Bennet"]["voice"] == "—"
 
+
+def test_library_choices_scored_with_reuse_and_recast(tmp_path):
+    from tts_audiobook import db as dbmod
+    from tts_audiobook.studio import library_choices, recast_to_clip, spec_for_speaker
+    from tts_audiobook import voicebuild
+    book = load_book(write_enriched(tmp_path))
+    conn = dbmod.connect(tmp_path / "studio.db")
+    book_id = dbmod.book_upsert(conn, book.source_path, title=book.title,
+                                author=book.author, gutenberg_id=None,
+                                output_dir=tmp_path / "out")
+
+    def add(sex, notes):
+        return dbmod.clip_add(conn, path=tmp_path / f"{notes}.wav", transcript="hi",
+                              duration_s=5.0, sex=sex, age_band="adult", locale="en-GB",
+                              region="Hertfordshire", quality="good", source="custom",
+                              license=None, notes=notes, sha256=notes)
+    male = add("male", "m"); f1 = add("female", "f1"); f2 = add("female", "f2")
+    dbmod.cast_upsert(conn, book_id, "Mrs. Long", library_clip_id=f2, ref_path="/r.wav")
+
+    spec = spec_for_speaker(book, "Elizabeth Bennet")   # female spec (fixture)
+    choices = library_choices(conn, book, book_id, "Elizabeth Bennet", spec)
+    by_id = {c["clip_id"]: c for c in choices}
+    assert by_id[male]["score"] == float("-inf")        # sex mismatch shown, not hidden
+    assert choices[-1]["clip_id"] == male               # ...and sorted last
+    assert by_id[f2]["in_use"] == ["Mrs. Long"]
+    assert by_id[f1]["in_use"] == []
+
+    # recast_to_clip freezes a reference and resets status to proposed.
+    calls = {}
+    def fake_build(*, book_key, character, clip_path, clip_transcript):
+        calls["clip"] = clip_path
+        class R: path = tmp_path / "ref.wav"; transcript = "hi"; sha256 = "abc"; design_seed = None
+        return R()
+    import tts_audiobook.studio as studio
+    monkey = studio.build_reference
+    studio.build_reference = fake_build
+    try:
+        dbmod.cast_upsert(conn, book_id, "Elizabeth Bennet", library_clip_id=f2,
+                          ref_path="/old.wav", status="accepted", audition_seed=4)
+        recast_to_clip(conn, book, book_id, "Elizabeth Bennet", f1, spec)
+    finally:
+        studio.build_reference = monkey
+    row = dbmod.cast_get(conn, book_id, "Elizabeth Bennet")
+    assert calls["clip"] == tmp_path / "f1.wav"
+    assert row["library_clip_id"] == f1 and row["status"] == "proposed"
+    assert row["ref_sha256"] == "abc" and row["audition_seed"] == 0
+

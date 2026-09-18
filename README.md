@@ -75,7 +75,8 @@ uv run tts-audiobook inspect 1342-pride-and-prejudice.json
 # 3. Cast: deterministic spec→clip matching, frozen references built
 uv run tts-audiobook cast 1342-pride-and-prejudice.json
 
-# 4. Audition: listen to one line per voice; accept / reroll / override
+# 4. Audition: listen to one line per voice; accept / reroll / pick any
+#    library voice ([l] shows the whole library scored for that speaker) / design
 uv run tts-audiobook audition 1342-pride-and-prejudice.json
 
 # 4b. See who got which voice; pin one speaker to a specific library clip

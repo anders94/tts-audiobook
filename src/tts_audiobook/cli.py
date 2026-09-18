@@ -402,12 +402,7 @@ def merge_cmd(book_path: Path, from_name: str | None, into_name: str | None,
               help="Library clip id to freeze as this character's voice.")
 def assign_cmd(book_path: Path, character: str, clip_id: int) -> None:
     """Pin one character to a specific library clip, overriding the scorer."""
-    import json as jsonlib
-    from dataclasses import asdict
-
-    from .book import book_output_subdir
-    from .studio import spec_for_speaker
-    from .voicebuild import build_reference
+    from .studio import recast_to_clip, spec_for_speaker
 
     book = _open_book(book_path)
     out_dir = _resolve_output_dir(book, None)
@@ -422,18 +417,9 @@ def assign_cmd(book_path: Path, character: str, clip_id: int) -> None:
         if character not in speakers:
             raise click.ClickException(
                 f"{character!r} is not a speaker in this book.")
-        ref = build_reference(book_key=book_output_subdir(book),
-                              character=character,
-                              clip_path=Path(row["path"]),
-                              clip_transcript=row["transcript"])
-        dbmod.cast_upsert(
-            conn, book_id, character,
-            spec_json=jsonlib.dumps(asdict(spec_for_speaker(book, character))),
-            library_clip_id=clip_id,
-            ref_path=str(ref.path), ref_transcript=ref.transcript,
-            ref_sha256=ref.sha256, design_seed=None, audition_seed=0,
-            status="accepted",
-        )
+        recast_to_clip(conn, book, book_id, character, clip_id,
+                       spec_for_speaker(book, character))
+        dbmod.cast_upsert(conn, book_id, character, status="accepted")
     shown = "(narrator)" if character == NARRATOR_KEY else character
     rprint(f"[green]{shown}[/green] → clip #{clip_id} (frozen, accepted)")
 
@@ -447,7 +433,8 @@ def assign_cmd(book_path: Path, character: str, clip_id: int) -> None:
               help="Accept every proposed voice without listening.")
 def audition_cmd(book_path: Path, character: str | None,
                  engine_name: str | None, auto_accept: bool) -> None:
-    """Play one line per cast voice; accept, reroll, or skip each."""
+    """Play one line per cast voice; accept, reroll, re-pick from the library,
+    design a new voice, or skip each."""
     from .studio import run_audition
     book = _open_book(book_path)
     out_dir = _resolve_output_dir(book, None)

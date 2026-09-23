@@ -37,6 +37,11 @@ def _roman_to_int(s: str) -> int:
     return total
 
 
+def is_bare_roman(text: str) -> bool:
+    """True for a heading line that is only a roman numeral ("I.", "XLII")."""
+    return bool(_BARE_ROMAN_RE.match(text.strip()))
+
+
 def normalize_heading(text: str, *, chapter_number: int | None = None,
                       is_title: bool = False) -> str:
     """Rewrite a chapter-heading roman numeral so TTS reads it as a number.

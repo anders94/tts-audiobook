@@ -98,3 +98,37 @@ def test_existing_heading_not_duplicated(tmp_path):
     assert [s.text for s in ch.segments[:2]] == \
         ["Chapter 1", "It is a truth universally acknowledged."]
 
+
+def test_numeral_line_before_title_becomes_chapter_number(tmp_path):
+    import copy
+    import json
+    from fixtures import ENRICHED_BOOK
+    data = copy.deepcopy(ENRICHED_BOOK)
+    ch = data["chapters"][0]
+    ch["chapter"]["title"] = "PLAYING PILGRIMS."
+    ch["processed"]["chapter_title"] = "PLAYING PILGRIMS."
+    ch["processed"]["segments"][0]["text"] = "I."
+    ch["processed"]["segments"].insert(1, {"type": "narration", "text": "PLAYING PILGRIMS.",
+                                           "speaker": None, "pronunciation_hints": [],
+                                           "notes": None, "start": 3, "end": 20})
+    p = tmp_path / "lw.json"
+    p.write_text(json.dumps(data), encoding="utf-8")
+    ch1 = load_book(p).chapters[0]
+    assert [s.text for s in ch1.segments[:3]] == \
+        ["Chapter 1.", "PLAYING PILGRIMS.", "It is a truth universally acknowledged."]
+    assert ch1.segments[0].speaker_key == NARRATOR_KEY
+
+
+def test_numeral_segment_not_followed_by_title_is_left_alone(tmp_path):
+    import copy
+    import json
+    from fixtures import ENRICHED_BOOK
+    data = copy.deepcopy(ENRICHED_BOOK)
+    segs = data["chapters"][0]["processed"]["segments"]
+    segs.insert(2, {"type": "narration", "text": "I.", "speaker": None,
+                    "pronunciation_hints": [], "notes": None, "start": 51, "end": 52})
+    p = tmp_path / "x.json"
+    p.write_text(json.dumps(data), encoding="utf-8")
+    texts = [s.text for s in load_book(p).chapters[0].segments]
+    assert texts[2] == "I."      # a mid-text "I." is content, not a heading
+

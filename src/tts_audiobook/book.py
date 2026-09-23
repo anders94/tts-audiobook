@@ -9,7 +9,7 @@ from pathlib import Path
 from .aliases import build_alias_map, canonicalize
 from .config import NARRATOR_KEY
 from .specs import CharacterSpec, Production, parse_characters, parse_production
-from .textnorm import heading_matches, normalize_heading, spoken_heading
+from .textnorm import heading_matches, is_bare_roman, normalize_heading, spoken_heading
 
 
 @dataclass
@@ -68,13 +68,18 @@ def load_book(path: Path) -> Book:
         ch_meta = ch.get("chapter") or {}
         number = int(proc.get("chapter_number") or ch_meta.get("number") or len(chapters) + 1)
         title = (proc.get("chapter_title") or ch_meta.get("title") or f"Chapter {number}").strip()
+        raw_segs = [s for s in (proc.get("segments", []) or []) if (s.get("text") or "").strip()]
         segs: list[Segment] = []
         has_heading = False
-        for s in proc.get("segments", []) or []:
-            text = (s.get("text") or "").strip()
-            if not text:
-                continue
+        for i, s in enumerate(raw_segs):
+            text = s["text"].strip()
             is_title = heading_matches(text, title)
+            if (not is_title and is_bare_roman(text) and i + 1 < len(raw_segs)
+                    and heading_matches(raw_segs[i + 1]["text"], title)):
+                # Numeral on its own line above the title ("I." / "PLAYING
+                # PILGRIMS." in Little Women): TTS reads "I." as the pronoun.
+                text = f"Chapter {number}."
+                is_title = True
             has_heading = has_heading or is_title
             text = normalize_heading(text, chapter_number=number, is_title=is_title)
             raw_speaker = s.get("speaker")

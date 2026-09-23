@@ -465,7 +465,8 @@ def _parse_chapters(chapters: str | None) -> list[int] | None:
 @click.option("--engine", "engine_name", default=None,
               type=click.Choice(["qwen", "chatterbox"]))
 @click.option("--base-url", default=None,
-              help="Base URL for MP3s in the RSS feed (default: file:// URL).")
+              help="Base URL for MP3s in the RSS feed "
+                   "(default: PUBLISH_BASE_URL + the book's output subdir).")
 @click.option("--no-qc", is_flag=True, help="Skip the Whisper QC pass.")
 @click.option("--force", is_flag=True,
               help="Re-render the requested chapters even if already done.")
@@ -560,8 +561,13 @@ def bakeoff_cmd(book_path: Path, chapter: int, engines_: str) -> None:
 @click.argument("book_path", type=click.Path(exists=True, dir_okay=False, path_type=Path))
 @click.option("--cover", type=click.Path(exists=True, dir_okay=False, path_type=Path),
               default=None)
-def package_cmd(book_path: Path, cover: Path | None) -> None:
-    """ID3-tag the chapter MP3s and build a .m4b with chapter markers."""
+@click.option("--base-url", default=None,
+              help="Base URL for files in the RSS feed "
+                   "(default: PUBLISH_BASE_URL + the book's output subdir).")
+def package_cmd(book_path: Path, cover: Path | None, base_url: str | None) -> None:
+    """ID3-tag the chapter MP3s, build a .m4b with chapter markers, and
+    refresh the feed with a whole-book download link."""
+    from .feed import write_feed
     from .package import build_m4b, tag_mp3s
     book = _open_book(book_path)
     out_dir = _resolve_output_dir(book, None)
@@ -570,9 +576,12 @@ def package_cmd(book_path: Path, cover: Path | None) -> None:
         n = tag_mp3s(conn, book, book_id)
         rprint(f"[green]Tagged {n} MP3s.[/green]")
         try:
-            build_m4b(conn, book, book_id, out_dir, cover)
+            m4b = build_m4b(conn, book, book_id, out_dir, cover)
         except RuntimeError as e:
             raise click.ClickException(str(e)) from e
+        rprint(f"[dim]Whole-book download: {m4b.stat().st_size / 1_000_000:.0f} MB[/dim]")
+        feed_path = write_feed(conn, book, book_id, out_dir, base_url)
+        rprint(f"[dim]Feed refreshed with the m4b link:[/dim] {feed_path}")
 
 
 @main.command("qc-report")

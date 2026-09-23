@@ -21,6 +21,10 @@ DB_PATH = DATA_DIR / "studio.db"
 LIBRARY_DIR = DATA_DIR / "library"     # tagged accent reference clips
 REFS_DIR = DATA_DIR / "refs"           # frozen per-book character references
 OUTPUT_ROOT = DATA_DIR / "output"
+# Where rendered books are published. Each book lives under its output
+# subdir name (e.g. .../books/1342-pride-and-prejudice/01_chapter-i.mp3), so
+# feed URLs mirror the local output layout. Override per run with --base-url.
+PUBLISH_BASE_URL = "https://gutenbergaloud.org/books/"
 
 QWEN_MODEL_ID = "Qwen/Qwen3-TTS-12Hz-1.7B-Base"
 QWEN_DESIGN_MODEL_ID = "Qwen/Qwen3-TTS-12Hz-1.7B-VoiceDesign"

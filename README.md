@@ -89,7 +89,11 @@ uv run tts-audiobook bakeoff 1342-pride-and-prejudice.json --chapter 3
 # 6. Render (resumable per chapter; QC pass with auto-retry)
 uv run tts-audiobook perform 1342-pride-and-prejudice.json
 
-# 7. Package: .m4b with chapter markers + ID3-tagged MP3s + RSS feed
+# 7. Package: ID3-tag the MP3s, build a whole-book .m4b with chapter markers,
+#    and refresh the feed with a link to it. Podcast apps keep the per-chapter
+#    episodes; the m4b is for audiobook apps (Apple Books, Audiobookshelf, …).
+#    Feed URLs default to https://gutenbergaloud.org/books/<gid>-<slug>/ (PUBLISH_BASE_URL
+#    in config.py); pass --base-url to perform/package to override.
 uv run tts-audiobook package 1342-pride-and-prejudice.json
 uv run tts-audiobook qc-report 1342-pride-and-prejudice.json
 ```

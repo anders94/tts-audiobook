@@ -6,11 +6,19 @@ from email.utils import format_datetime
 from pathlib import Path
 from xml.sax.saxutils import escape, quoteattr
 
-from .book import Book
+from . import config
+from .book import Book, book_output_subdir, slugify
 
 FEED_FILENAME = "feed.xml"
 
 ITUNES_NS = "http://www.itunes.com/dtds/podcast-1.0.dtd"
+ATOM_NS = "http://www.w3.org/2005/Atom"
+
+
+def m4b_path(book: Book, output_dir: Path) -> Path | None:
+    """The packaged whole-book file (see package.build_m4b), if it has been built."""
+    p = output_dir / f"{slugify(book.title)}.m4b"
+    return p if p.exists() else None
 
 
 def _attr(s: str) -> str:
@@ -28,8 +36,9 @@ def _parse_iso(s: str) -> datetime:
     return dt
 
 
-def _default_base_url(output_dir: Path) -> str:
-    return "file://" + str(output_dir.resolve()) + "/"
+def default_base_url(book: Book) -> str:
+    """Published location of this book's files: PUBLISH_BASE_URL + output subdir."""
+    return config.PUBLISH_BASE_URL.rstrip("/") + "/" + book_output_subdir(book) + "/"
 
 
 def _build_item(*, episode: int, title: str, description: str,
@@ -53,7 +62,7 @@ def write_feed(conn: sqlite3.Connection, book: Book, book_id: int,
                output_dir: Path, base_url: str | None = None) -> Path:
     """Emit (or rewrite) feed.xml summarizing every completed mp3."""
     if base_url is None:
-        base_url = _default_base_url(output_dir)
+        base_url = default_base_url(book)
     if not base_url.endswith("/"):
         base_url += "/"
 
@@ -98,13 +107,26 @@ def write_feed(conn: sqlite3.Connection, book: Book, book_id: int,
                                 + (f" by {author}." if book.author else "."))
     now = format_datetime(datetime.now(timezone.utc))
 
+    # Podcast listeners get per-chapter episodes; audiobook apps (Apple Books,
+    # Audiobookshelf, BookPlayer…) want one file with chapter markers. Link the
+    # packaged m4b from the channel so both audiences can find it.
+    m4b = m4b_path(book, output_dir)
+    m4b_xml = ""
+    if m4b is not None:
+        m4b_url = base_url + m4b.name
+        channel_desc = (channel_desc.rstrip() + " The whole book is also available as a "
+                        f"single audiobook file with chapter markers: {m4b_url}")
+        m4b_xml = (f'    <atom:link rel="alternate" type="audio/mp4" href={_attr(m4b_url)} '
+                   f'title="Whole book (m4b, {m4b.stat().st_size // 1_000_000} MB)"/>\n')
+
     feed = (
         '<?xml version="1.0" encoding="UTF-8"?>\n'
-        f'<rss version="2.0" xmlns:itunes="{ITUNES_NS}">\n'
+        f'<rss version="2.0" xmlns:itunes="{ITUNES_NS}" xmlns:atom="{ATOM_NS}">\n'
         '  <channel>\n'
         f'    <title>{_text(book.title)}</title>\n'
         f'    <link>{_text(base_url)}</link>\n'
         f'    <description>{_text(channel_desc)}</description>\n'
+        + m4b_xml +
         f'    <language>{lang}</language>\n'
         f'    <lastBuildDate>{now}</lastBuildDate>\n'
         f'    <itunes:author>{_text(author)}</itunes:author>\n'
